@@ -170,3 +170,22 @@ BrowserLocalChrome.prototype.scheduleStopPacketCapture = function() {
   'use strict';
   throw new Error('Packet capture requested, but not implemented for Chrome');
 };
+
+/**
+ * Set DNS Overrides.
+ *
+ * @param {Array.<string,string>} setDnsOverrides  Array of DNS overrides from script.
+ */
+BrowserLocalChrome.prototype.scheduleSetDnsOverrides = function(setDnsOverrides) {
+  'use strict';
+  throw new Error('Set DNS overrides requested, but not implemented for Chrome');
+};
+
+/**
+ * Clear DNS Overrides.
+ *
+ */
+BrowserLocalChrome.prototype.scheduleClearDnsOverrides = function() {
+  'use strict';
+  throw new Error('Clear DNS overrides requested, but not implemented for Chrome');
+}

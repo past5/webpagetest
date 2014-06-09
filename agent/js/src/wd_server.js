@@ -660,19 +660,7 @@ WebDriverServer.prototype.getCapabilities_ = function() {
  */
 WebDriverServer.prototype.clearPageAndStartVideoDevTools_ = function() {
   'use strict';
-  this.getCapabilities_().then(function(caps) {
-    if (!this.isCacheCleared_) {
-      if (caps['wkrdp.Network.clearBrowserCache']) {
-        this.networkCommand_('clearBrowserCache');
-        this.app_.schedule('Cache cleared', function() {
-          this.isCacheCleared_ = true;
-        }.bind(this));
-      }
-      if (caps['wkrdp.Network.clearBrowserCookies']) {
-        this.networkCommand_('clearBrowserCookies');
-      }
-    }
-  }.bind(this));
+
   // Navigate to a blank, to make sure we clear the prior page and cancel
   // all pending events.  This isn't strictly required if startBrowser loads
   // "about:blank", but it's still a good idea.
@@ -736,6 +724,27 @@ WebDriverServer.prototype.clearPageAndStartVideoWd_ = function() {
 };
 
 /**
+ * Clears browser cache and cookies
+ * @private
+ */
+WebDriverServer.prototype.scheduleClearBrowserCacheAndCookies_ = function() {
+  'use strict';
+  this.getCapabilities_().then(function(caps) {
+    if (!this.isCacheCleared_) {
+      if (caps['wkrdp.Network.clearBrowserCache']) {
+        this.networkCommand_('clearBrowserCache');
+        this.app_.schedule('Cache cleared', function() {
+          this.isCacheCleared_ = true;
+        }.bind(this));
+      }
+      if (caps['wkrdp.Network.clearBrowserCookies']) {
+        this.networkCommand_('clearBrowserCookies');
+      }
+    }
+  }.bind(this));
+};
+
+/**
  * Starts video recording, sets the video file, registers video stop handler.
  * @private
  */
@@ -769,6 +778,21 @@ WebDriverServer.prototype.scheduleStartPacketCaptureIfRequested_ = function() {
   }
 };
 
+
+/**
+ * setDns overrides from script commands.
+ * @private
+ */
+WebDriverServer.prototype.scheduleSetDnsOverrides_ = function() {
+  'use strict';
+  if (this.task_.setDnsOverrides && this.task_.setDnsOverrides.length > 0) {
+    this.browser_.scheduleSetDnsOverrides(this.task_.setDnsOverrides);
+    this.app_.schedule('Setting DNS overrides', function() {
+      logger.debug('DNS overrides succeeded');
+    }.bind(this));
+  }
+};
+
 /**
  * @param {Object} browserCaps browser capabilities used to build the driver.
  * @private
@@ -779,6 +803,8 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
   if (!this.devTools_) {
     this.startChrome_(browserCaps);
   }
+  this.scheduleSetDnsOverrides_();
+  this.scheduleClearBrowserCacheAndCookies_();
   this.clearPageAndStartVideoDevTools_();
   this.scheduleStartPacketCaptureIfRequested_();
   // No page load timeout here -- agent_main enforces run-level timeout.
@@ -1040,6 +1066,9 @@ WebDriverServer.prototype.done_ = function(e) {
         this.pcapFile_ = undefined;
       }
     }.bind(this));
+  }
+  if (this.task_.setDnsOverrides && this.task_.setDnsOverrides.length > 0) {
+    this.browser_.scheduleClearDnsOverrides();
   }
   this.app_.schedule('Send IPC ' + cmd, function() {
     logger.debug('sending IPC ' + cmd);

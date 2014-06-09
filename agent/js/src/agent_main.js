@@ -118,6 +118,8 @@ Agent.prototype.scheduleNoFault_ = function(description, f) {
  */
 Agent.prototype.startWdServer_ = function(job) {
   'use strict';
+  // for debugging the wd_server code
+  // process.execArgv.push('--debug-brk=5859');
   this.wdServer_ = child_process.fork('./src/wd_server.js',
       [], {env: process.env});
   this.wdServer_.on('message', function(ipcMsg) {
@@ -130,6 +132,7 @@ Agent.prototype.startWdServer_ = function(job) {
         // Error in a first-view run: can't do a repeat run.
         isRunFinished = true;
       }
+
       this.scheduleProcessDone_(ipcMsg, job);
       if (isRunFinished) {
         this.scheduleCleanup_(/*isEndOfJob=*/job.runNumber === job.runs);
@@ -251,12 +254,16 @@ Agent.prototype.startJobRun_ = function(job) {
   }
   var script = job.task.script;
   var url = job.task.url;
+  var setDnsOverrides;
+  var navigateUrls;
   var pac;
   if (script && !/new\s+(\S+\.)?Builder\s*\(/.test(script)) {
-    var urlAndPac = this.decodeUrlAndPacFromScript_(script);
-    url = urlAndPac.url;
-    pac = urlAndPac.pac;
+    var decodedScript = this.decodeScript_(script);
+    url = decodedScript.url;
+    pac = decodedScript.pac;
     script = undefined;
+    setDnsOverrides = decodedScript.setDnsOverrides;
+    navigateUrls = decodedScript.navigateUrls;
   }
   url = url.trim();
   if (!((/^https?:\/\//i).test(url))) {
@@ -272,18 +279,34 @@ Agent.prototype.startJobRun_ = function(job) {
     Object.getOwnPropertyNames(job.task).forEach(function(key) {
       task[key] = job.task[key];
     }.bind(this));
+
     // Override some task fields:
     if (!!script) {
       task.script = script;
     } else {
       delete task.script;
     }
+
     if (!!url) {
       task.url = url;
     }
+
     if (!!pac) {
       task.pac = pac;
     }
+
+    if (!!setDnsOverrides) {
+      task.setDnsOverrides = setDnsOverrides;
+    } else {
+      delete task.setDnsOverrides;
+    }
+
+    if (!!navigateUrls) {
+      task.navigateUrls = navigateUrls;
+    } else {
+      delete task.navigateUrls;
+    }
+
     var exitWhenDone = job.isFirstViewOnly || job.isCacheWarm;
     if (0 === job.runNumber) {  // Recording run
       exitWhenDone = true;
@@ -379,10 +402,13 @@ ScriptError.prototype = new Error();
  *   {url:'http://x.com', pac:'function Find...'}.
  * @private
  */
-Agent.prototype.decodeUrlAndPacFromScript_ = function(script) {
+Agent.prototype.decodeScript_ = function(script) {
   'use strict';
   // Assign nulls to appease 'possibly uninitialized' warnings.
-  var fromHost = null, toHost = null, proxy = null, url = null;
+  var url = null;
+  var pac = null;
+  var navigateUrls = [];
+  var setDnsOverrides = [];
   script.split('\n').forEach(function(line, lineNumber) {
     line = line.trim();
     if (!line || 0 === line.indexOf('//')) {
@@ -391,38 +417,52 @@ Agent.prototype.decodeUrlAndPacFromScript_ = function(script) {
     if (line.match(/^(if|endif|addHeader)\s/i)) {
       return;
     }
-    var m = line.match(/^setDnsName\s+(\S+)\s+(\S+)$/i);
-    if (m && !fromHost && !url) {
-      fromHost = m[1];
-      toHost = m[2];
-      return;
-    }
-    m = line.match(/^overrideHost\s+(\S+)\s+(\S+)$/i);
-    if (m && fromHost && m[1] === fromHost && !proxy && !url) {
-      proxy = m[2];
+    var m = line.match(/^setDns\s+(\S+)\s+(\S+)$/i);
+    if (m) {
+      var hostName = m[1];
+      var ipAddress = m[2];
+      setDnsOverrides.push([ipAddress, hostName]);
       return;
     }
     m = line.match(/^navigate\s+(\S+)$/i);
-    if (m && fromHost && !url) {
-      url = m[1];
+    if (m) {
+      navigateUrls.push(m[1]);
       return;
     }
-    throw new ScriptError('WPT script contains unsupported line[' +
-        lineNumber + ']: ' + line + '\n' +
-        '--- support is limited to:\n' +
-        'setDnsName H1 H2\\n [overrideHost H1 H3]\\n navigate H4');
-  });
-  if (!fromHost || !url) {
-    throw new ScriptError('WPT script lacks ' +
-        (fromHost ? 'navigate' : 'setDnsName'));
-  }
-  logger.debug('Script is a simple PAC from=%s to=%s url=%s',
-      fromHost, proxy || toHost, url);
-  return {url: url, pac: 'function FindProxyForURL(url, host) {\n' +
+    m = line.match(/^pac\s+(\S+)\s+(\S+)$/i);
+    if (m) {
+      var fromHost = m[1];
+      var toHost = m[2];
+      pac = 'function FindProxyForURL(url, host) {\n' +
       '  if ("' + fromHost + '" === host) {\n' +
-      '    return "PROXY ' + (proxy || toHost) + '";\n' +
+        '    return "PROXY ' + toHost + '";\n' +
       '  }\n' +
-      '  return "DIRECT";\n}\n'};
+        '  return "DIRECT";\n}\n';
+    }
+    throw new ScriptError('WPT script contains unsupported line[' +
+      lineNumber + ']: ' + line + '<br/>' +
+      '--- support is limited to:<br/>' +
+      '--- setDns [hostname] [ip]<br/>' +
+      '--- pac [fromHost] [toHost]<br/>' +
+      '--- navigate [url]');
+  });
+
+  if(navigateUrls.length > 0) {
+    // final navigate is our test url
+    url = navigateUrls[navigateUrls.length-1];
+    // remove final navigate from priming runs
+    navigateUrls.slice(navigateUrls.length-1, 1);
+  }
+  if (!url) {
+    throw new ScriptError('WPT script lacks navigate');
+  }
+  logger.debug('');
+  return {
+    url: url,
+    pac: pac,
+    setDnsOverrides: setDnsOverrides,
+    navigateUrls: navigateUrls
+  };
 };
 
 /**
