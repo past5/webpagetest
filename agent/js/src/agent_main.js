@@ -447,15 +447,17 @@ Agent.prototype.decodeScript_ = function(script) {
       '--- navigate [url]');
   });
 
-  if(navigateUrls.length > 0) {
+  if (navigateUrls.length > 0) {
     // final navigate is our test url
-    url = navigateUrls[navigateUrls.length-1];
+    url = navigateUrls[navigateUrls.length - 1];
     // remove final navigate from priming runs
-    navigateUrls.slice(navigateUrls.length-1, 1);
+    navigateUrls.slice(0, navigateUrls.length - 1);
   }
+
   if (!url) {
-    throw new ScriptError('WPT script lacks navigate');
+    throw new ScriptError('WPT script lacks navigate command');
   }
+
   logger.debug('');
   return {
     url: url,

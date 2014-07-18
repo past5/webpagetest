@@ -690,10 +690,8 @@ BrowserIos.prototype.scheduleStopPacketCapture = function() {
 
 /**
  * Set DNS Overrides.
- *
- * @param {Array.<string,string>} setDnsOverrides  Array of DNS overrides from script.
  */
-BrowserIos.prototype.scheduleSetDnsOverrides = function(setDnsOverrides) {
+BrowserIos.prototype.scheduleSetDnsOverrides = function() {
   'use strict';
   throw new Error('Set DNS overrides requested, but not implemented for iOS');
 };
@@ -705,7 +703,7 @@ BrowserIos.prototype.scheduleSetDnsOverrides = function(setDnsOverrides) {
 BrowserIos.prototype.scheduleClearDnsOverrides = function() {
   'use strict';
   throw new Error('Clear DNS overrides requested, but not implemented for iOS');
-}
+};
 
 /**
  * Verifies that the device is attached and has WiFi.

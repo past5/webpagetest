@@ -591,9 +591,10 @@ BrowserAndroidChrome.prototype.scheduleTakeScreenshot =
 /**
  * Set DNS Overrides.
  *
- * @param {Array.<string,string>} setDnsOverrides  Array of DNS overrides from script.
+ * @param {Array.<string,string>} overrides  Array of
+ *     DNS overrides from script.
  */
-BrowserAndroidChrome.prototype.scheduleSetDnsOverrides = function(setDnsOverrides) {
+BrowserAndroidChrome.prototype.scheduleSetDnsOverrides = function(overrides) {
   'use strict';
   // we need to write to /system which is read only
   logger.debug('Remounting /system as read/write');
@@ -602,9 +603,9 @@ BrowserAndroidChrome.prototype.scheduleSetDnsOverrides = function(setDnsOverride
   logger.debug('Adding DNS overrides');
   // overwriting hosts file so always add the localhost entry first
   this.adb_.su(['echo', '127.0.0.1 localhost > /system/etc/hosts']);
-  for(var i = 0; i < setDnsOverrides.length; i++) {
-    var ip = setDnsOverrides[i][0];
-    var host = setDnsOverrides[i][1];
+  for (var i = 0; i < overrides.length; i++) {
+    var ip = overrides[i][0];
+    var host = overrides[i][1];
     this.adb_.su(['echo', ip + ' ' + host + ' >> /system/etc/hosts']);
   }
 };

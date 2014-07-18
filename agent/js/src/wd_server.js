@@ -159,6 +159,7 @@ WebDriverServer.prototype.init = function(args) {
   this.exitWhenDone_ = args.exitWhenDone;
   this.isRecordingDevTools_ = false;
   this.pageLoadDonePromise_ = undefined;
+  this.isPrimingRun = false;
   this.pcapFile_ = undefined;
   this.runNumber_ = args.runNumber;
   this.screenshots_ = [];
@@ -185,9 +186,11 @@ WebDriverServer.prototype.startWdServer_ = function(browserCaps) {
 
   // Check for getCapabilities().webdriver? But then what -- exception anyway,
   // so the Browser's startWdServer may as well throw that exception.
+  logger.debug('Starting WS Server');
   this.browser_.startWdServer(browserCaps);
   // The following needs to be scheduled() because getServerUrl() returns
   // the URL only after the startWdServer_() scheduled action finishes.
+  logger.debug('Wait for WD server to become ready');
   this.app_.schedule('Wait for WD server to become ready', function() {
     var serverUrl = this.browser_.getServerUrl();
     logger.info('WD server URL: %s', serverUrl);
@@ -293,7 +296,7 @@ WebDriverServer.prototype.onDevToolsMessage_ = function(message) {
   // message, as noted below, so ignore messages until our abortTimer fires.
   if (!this.abortTimer_) {
     if ('Page.loadEventFired' === message.method) {
-      if (this.isRecordingDevTools_) {
+      if (this.isRecordingDevTools_ || this.isPrimingRun) {
         this.onPageLoad_();
       }
     } else if ('Inspector.detached' === message.method) {
@@ -805,6 +808,9 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
   }
   this.scheduleSetDnsOverrides_();
   this.scheduleClearBrowserCacheAndCookies_();
+
+  this.scheduleLoadPrimingPages();
+
   this.clearPageAndStartVideoDevTools_();
   this.scheduleStartPacketCaptureIfRequested_();
   // No page load timeout here -- agent_main enforces run-level timeout.
@@ -823,6 +829,37 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
   this.waitForCoalesce_(webdriver, exports.WAIT_AFTER_ONLOAD_MS);
 };
 
+/**
+ * Loop through and load all the cache priming pages before
+ * the page to test is run. For flow testing.
+ */
+WebDriverServer.prototype.scheduleLoadPrimingPages = function() {
+  'use strict';
+  if( this.task_.navigateUrls && this.task_.navigateUrls.length > 0 ) {
+    logger.debug('Starting priming pages');
+    var primingPages = this.task_.navigateUrls;
+    for (var i = 0; i < primingPages.length; i++) {
+      var primingPage = primingPages[i];
+      logger.debug('Priming page: ' + i);
+      this.runPrimingPage(primingPage);
+    }
+    logger.debug('Done priming pages');
+    this.pageLoadDonePromise_ = undefined;
+  }
+};
+
+/**
+ * Load a single cache priming page. For flow testing.
+ * @param {String} primingPage
+ */
+WebDriverServer.prototype.runPrimingPage = function(primingPage) {
+  'use strict';
+  this.app_.schedule('Priming Url: ' + primingPage, function() {
+    this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
+    this.pageCommand_('navigate', {url: primingPage});
+    return this.pageLoadDonePromise_.promise;
+  }.bind(this));
+};
 /**
  * Runs the user script in a sandboxed environment.
  *
