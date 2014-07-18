@@ -833,6 +833,8 @@ function UpdateLocation(&$test, &$locations, $new_location)
 */
 function ValidateKey(&$test, &$error, $key = null)
 {
+  global $admin;
+  
   // load the secret key (if there is one)
   $secret = '';
   $keys = parse_ini_file('./settings/keys.ini', true);
@@ -921,7 +923,7 @@ function ValidateKey(&$test, &$error, $key = null)
           global $usingAPI;
           $usingAPI = true;
       }
-    }else{
+    }elseif (!isset($admin) || !$admin) {
       $error = 'An error occurred processing your request.  Please reload the testing page and try submitting your test request again. (missing API key)';
     }
   }
@@ -1556,21 +1558,26 @@ function CheckIp(&$test)
         $ip2 = @$test['ip'];
         $ip = $_SERVER['REMOTE_ADDR'];
         $blockIps = file('./settings/blockip.txt', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
-        foreach( $blockIps as $block ) {
-            $block = trim($block);
-            if( strlen($block) ) {
-                if( ereg($block, $ip) ) {
-                    logMsg("$ip: matched $block for url {$test['url']}", "./log/{$date}-blocked.log", true);
-                    $ok = false;
-                    break;
-                }
+        if (isset($blockIps) && is_array($blockIps) && count($blockIps)) {
+          $blockIpsAuto = file('./settings/blockipauto.txt', FILE_IGNORE_NEW_LINES | FILE_SKIP_EMPTY_LINES);
+          if (isset($blockIpsAuto) && is_array($blockIpsAuto) && count($blockIpsAuto))
+            $blockIps = array_merge($blockIps, $blockIpsAuto);
+          foreach( $blockIps as $block ) {
+              $block = trim($block);
+              if( strlen($block) ) {
+                  if( ereg($block, $ip) ) {
+                      logMsg("$ip: matched $block for url {$test['url']}", "./log/{$date}-blocked.log", true);
+                      $ok = false;
+                      break;
+                  }
 
-                if( $ip2 && strlen($ip2) && ereg($block, $ip2) ) {
-                    logMsg("$ip2: matched(2) $block for url {$test['url']}", "./log/{$date}-blocked.log", true);
-                    $ok = false;
-                    break;
-                }
-            }
+                  if( $ip2 && strlen($ip2) && ereg($block, $ip2) ) {
+                      logMsg("$ip2: matched(2) $block for url {$test['url']}", "./log/{$date}-blocked.log", true);
+                      $ok = false;
+                      break;
+                  }
+              }
+          }
         }
     }
 
@@ -1624,7 +1631,9 @@ function CheckUrl($url)
                 $host = trim($parts['host']);
                 foreach( $blockAuto as $block ) {
                     $block = trim($block);
-                    if( strlen($block) && !strcasecmp($host, $block)) {
+                    if( strlen($block) &&
+                        (!strcasecmp($host, $block) ||
+                         !strcasecmp($host, "www.$block"))) {
                          logMsg("{$_SERVER['REMOTE_ADDR']}: host $url matched auto-block $block", "./log/{$date}-blocked.log", true);
                         $ok = false;
                         break;
@@ -1891,6 +1900,8 @@ function ParseBulkUrl($line)
     global $settings;
     $err;
     $noscript = 0;
+
+
 
     $pos = stripos($line, 'noscript');
     if( $pos !== false )

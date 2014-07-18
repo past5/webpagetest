@@ -695,7 +695,7 @@ void CPagetestReporting::ProcessResults(void)
 						firstByte = w->firstByte;
 					
 					// flag errors based on the wininet events
-					if( !errorCode && (w->result >= 400 || w->result < 0) )
+					if( !errorCode && w->result != 401 && (w->result >= 400 || w->result < 0) )
 					{
 						if( (endDoc && w->start < endDoc) || abm == 1 )
 							errorCode = 99999;
@@ -1862,7 +1862,6 @@ void CPagetestReporting::CheckGzip()
 			CString mime = w->response.contentType;
 			mime.MakeLower();
 			if( w->result == 200
-				&& w->linkedRequest
 				&& w->fromNet )
 			{
 				CString enc = w->response.contentEncoding;
@@ -1928,7 +1927,10 @@ void CPagetestReporting::CheckGzip()
 							  target = origSize;
 							  w->gzipScore = -1;
 						  }
-					  }
+            } else {
+						  target = origSize;
+						  w->gzipScore = -1;
+            }
 					}
 				}
 
