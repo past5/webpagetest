@@ -399,10 +399,12 @@ describe('wd_server small', function() {
 
     // * Verify after run 1, make sure we did quit/stop Chrome.
     should.ok(startChromeStub.calledOnce);
-    should.equal('chrome', startChromeStub.firstCall.args[0].browserName);
+    should.equal(startChromeStub.firstCall.args[0].browserName, 'chrome');
 
     should.ok(stubWebSocket.calledOnce);
     should.ok('ws://gaga', stubWebSocket.firstCall.args[0]);
+
+    fakeWs.commands.should.eql(
     [
         'Timeline.start',
         'Network.clearBrowserCache',
@@ -412,16 +414,16 @@ describe('wd_server small', function() {
         'Page.enable',
         'Page.navigate',  // To the real page.
         'Page.captureScreenshot'
-      ].should.eql(fakeWs.commands);
+      ]);
     fakeWs.commands = [];  // Reset for the next verification.
     should.ok(sendStub.calledOnce);
     var doneIpcMsg = sendStub.firstCall.args[0];
     should.equal(doneIpcMsg.cmd, 'done');
-    [pageMessage, networkMessage, timelineMessage,
-        pageLoadedMessage].should.eql(doneIpcMsg.devToolsMessages);
+    doneIpcMsg.devToolsMessages.should.eql(
+      [pageMessage, networkMessage, timelineMessage, pageLoadedMessage]);
     ['screen.jpg'].should.eql(
         doneIpcMsg.screenshots.map(function(s) { return s.fileName; }));
-    should.equal(1, writeFileStub.callCount);
+    should.equal(writeFileStub.callCount, 1);
 
     // Make sure we cleaned up.
     should.ok(killStub.calledOnce);

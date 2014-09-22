@@ -660,16 +660,22 @@ WebDriverServer.prototype.getCapabilities_ = function() {
  *
  * @private
  */
-WebDriverServer.prototype.clearPageAndStartVideoDevTools_ = function() {
-  'use strict';
-
+WebDriverServer.prototype.blankBrowserPage = function() {
   // Navigate to a blank, to make sure we clear the prior page and cancel
   // all pending events.  This isn't strictly required if startBrowser loads
   // "about:blank", but it's still a good idea.
   this.pageCommand_('navigate', {url: BLANK_PAGE_URL_});
   this.app_.timeout(500, 'Load blank startup page');
-  this.networkCommand_('enable');
-  this.pageCommand_('enable');
+};
+
+/**
+ * Start recording video and enables the isRecordingDevTools_ flag
+ *
+ * @private
+ */
+WebDriverServer.prototype.startVideoDevTools_ = function() {
+  'use strict';
+
   if (1 === this.task_['Capture Video']) {  // Emit video sync, start recording
     this.getCapabilities_().then(function(caps) {
       if (!caps.videoRecording) {
@@ -687,18 +693,16 @@ WebDriverServer.prototype.clearPageAndStartVideoDevTools_ = function() {
         // This allows us to sync the DevTools trace vs. the video by matching
         // the first DevTools paint event timestamp to the video frame where
         // the background changed from non-white to white.
-        this.app_.schedule('Start recording DevTools with video', function() {
-          this.isRecordingDevTools_ = true;
-        }.bind(this));
+        this.isRecordingDevTools_ = true;
         this.app_.timeout(500, 'Hold orange background');
         this.setPageBackground_(frameId);  // White
       }.bind(this));
     }.bind(this));
   }
+
   // Make sure we start recording DevTools regardless of the video.
-  this.app_.schedule('Start recording DevTools', function() {
-    this.isRecordingDevTools_ = true;
-  }.bind(this));
+  this.isRecordingDevTools_ = true;
+
 };
 
 /**
@@ -811,9 +815,14 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
   this.scheduleSetDnsOverrides_();
   this.scheduleClearBrowserCacheAndCookies_();
 
+  this.blankBrowserPage();
+
+  this.networkCommand_('enable');
+  this.pageCommand_('enable');
+
   this.scheduleLoadPrimingPages();
 
-  this.clearPageAndStartVideoDevTools_();
+  this.startVideoDevTools_();
   this.scheduleStartPacketCaptureIfRequested_();
   // No page load timeout here -- agent_main enforces run-level timeout.
   this.app_.schedule('Run page load', function() {
@@ -837,7 +846,7 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
  */
 WebDriverServer.prototype.scheduleLoadPrimingPages = function() {
   'use strict';
-  if( this.task_.navigateUrls && this.task_.navigateUrls.length > 0 ) {
+  if (this.task_.navigateUrls && this.task_.navigateUrls.length > 0) {
     logger.debug('Starting priming pages');
     var primingPages = this.task_.navigateUrls;
     for (var i = 0; i < primingPages.length; i++) {

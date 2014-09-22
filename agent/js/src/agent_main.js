@@ -376,20 +376,15 @@ function ScriptError(message) {
 ScriptError.prototype = new Error();
 
 /**
- * Extract the URL and PAC from a simple WPT script.
+ * Parse the supported commands from WPT script.
  *
- * We don't support general WPT scripts.  Instead, we only support the minimal
- * subset that's required to express a PAC proxy configuration script.
- * Here are a couple examples of supported scripts:
+ * Currently supported are:
  *
- *    1)
- *    setDnsName foo.com bar.com
- *    navigate qux.com
+ *   setDns hostName ipAddress
  *
- *    2)
- *    setDnsName foo.com ignored.com
- *    overrideHost foo.com bar.com
- *    navigate qux.com
+ *   navigate url
+ *
+ *   pac fromHost toHost
  *
  * Blank lines and lines starting with "//" are ignored.  Lines starting with
  * "if", "endif", and "addHeader" are also ignored for now, but this feature is
@@ -397,7 +392,7 @@ ScriptError.prototype = new Error();
  * will throw a ScriptError.
  *
  * @param {string} script e.g.:
- *   setDnsName fromHost toHost
+ *   setDns hostName ipAddress
  *   navigate url.
  * @return {Object} a URL and PAC object, e.g.:
  *   {url:'http://x.com', pac:'function Find...'}.
@@ -452,7 +447,7 @@ Agent.prototype.decodeScript_ = function(script) {
     // final navigate is our test url
     url = navigateUrls[navigateUrls.length - 1];
     // remove final navigate from priming runs
-    navigateUrls.slice(0, navigateUrls.length - 1);
+    navigateUrls = navigateUrls.slice(0, navigateUrls.length - 1);
   }
 
   if (!url) {
