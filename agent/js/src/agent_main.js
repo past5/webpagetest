@@ -406,13 +406,13 @@ Agent.prototype.decodeScript_ = function(script) {
   var navigateUrls = [];
   var setDnsOverrides = [];
   script.split('\n').forEach(function(line, lineNumber) {
+
     line = line.trim();
     if (!line || 0 === line.indexOf('//')) {
       return;
     }
-    if (line.match(/^(if|endif|addHeader)\s/i)) {
-      return;
-    }
+
+    // find setDns commands
     var m = line.match(/^setDns\s+(\S+)\s+(\S+)$/i);
     if (m) {
       var hostName = m[1];
@@ -420,11 +420,15 @@ Agent.prototype.decodeScript_ = function(script) {
       setDnsOverrides.push([ipAddress, hostName]);
       return;
     }
+
+    // find navigate commands
     m = line.match(/^navigate\s+(\S+)$/i);
     if (m) {
       navigateUrls.push(m[1]);
       return;
     }
+
+    // find pac commands
     m = line.match(/^pac\s+(\S+)\s+(\S+)$/i);
     if (m) {
       var fromHost = m[1];
@@ -434,13 +438,22 @@ Agent.prototype.decodeScript_ = function(script) {
         '    return "PROXY ' + toHost + '";\n' +
       '  }\n' +
         '  return "DIRECT";\n}\n';
+      return;
     }
+
+    // log unsupported commands
+    logger.info('WPT script contains unsupported line[' +
+      lineNumber + ']: ' + line);
+
+    // error on unsupported commands
+    /*
     throw new ScriptError('WPT script contains unsupported line[' +
       lineNumber + ']: ' + line + '<br/>' +
       '--- support is limited to:<br/>' +
       '--- setDns [hostname] [ip]<br/>' +
       '--- pac [fromHost] [toHost]<br/>' +
       '--- navigate [url]');
+      */
   });
 
   if (navigateUrls.length > 0) {

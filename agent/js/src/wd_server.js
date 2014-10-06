@@ -658,9 +658,9 @@ WebDriverServer.prototype.getCapabilities_ = function() {
 /**
  * Blanks out the browser at the beginning of a test, using DevTools.
  *
- * @private
  */
 WebDriverServer.prototype.blankBrowserPage = function() {
+  'use strict';
   // Navigate to a blank, to make sure we clear the prior page and cancel
   // all pending events.  This isn't strictly required if startBrowser loads
   // "about:blank", but it's still a good idea.
