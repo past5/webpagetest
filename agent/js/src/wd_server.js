@@ -675,34 +675,35 @@ WebDriverServer.prototype.blankBrowserPage = function() {
  */
 WebDriverServer.prototype.startVideoDevTools_ = function() {
   'use strict';
-
-  if (1 === this.task_['Capture Video']) {  // Emit video sync, start recording
-    this.getCapabilities_().then(function(caps) {
-      if (!caps.videoRecording) {
-        return;
-      }
-      // Get the root frameId
-      this.pageCommand_('getResourceTree').then(function(result) {
-        var frameId = result.frameTree.frame.id;
-        // Hold orange(500ms)->white: anchor video to DevTools.
-        this.setPageBackground_(frameId, GHASTLY_ORANGE_);
-        this.app_.timeout(500, 'Set orange background');
-        this.scheduleStartVideoRecording_();
-        // Begin recording DevTools before onTestStarted_ fires,
-        // to make sure we get the paint event from the below switch to white.
-        // This allows us to sync the DevTools trace vs. the video by matching
-        // the first DevTools paint event timestamp to the video frame where
-        // the background changed from non-white to white.
-        this.isRecordingDevTools_ = true;
-        this.app_.timeout(500, 'Hold orange background');
-        this.setPageBackground_(frameId);  // White
+  this.app_.schedule('Priming Pages', function() {
+    if (1 === this.task_['Capture Video']) {  // Emit video sync, start recording
+      this.getCapabilities_().then(function (caps) {
+        if (!caps.videoRecording) {
+          return;
+        }
+        // Get the root frameId
+        this.pageCommand_('getResourceTree').then(function (result) {
+          var frameId = result.frameTree.frame.id;
+          // Hold orange(500ms)->white: anchor video to DevTools.
+          this.setPageBackground_(frameId, GHASTLY_ORANGE_);
+          this.app_.timeout(500, 'Set orange background');
+          this.scheduleStartVideoRecording_();
+          // Begin recording DevTools before onTestStarted_ fires,
+          // to make sure we get the paint event from the below switch to white.
+          // This allows us to sync the DevTools trace vs. the video by matching
+          // the first DevTools paint event timestamp to the video frame where
+          // the background changed from non-white to white.
+          this.isRecordingDevTools_ = true;
+          this.app_.timeout(500, 'Hold orange background');
+          this.setPageBackground_(frameId);  // White
+        }.bind(this));
       }.bind(this));
-    }.bind(this));
-  }
+    }
 
-  // Make sure we start recording DevTools regardless of the video.
-  this.isRecordingDevTools_ = true;
-
+    // Make sure we start recording DevTools regardless of the video.
+    this.isRecordingDevTools_ = true;
+    logger.debug('Set isRecordingDevTools_');
+  }.bind(this));
 };
 
 /**
@@ -846,17 +847,16 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
  */
 WebDriverServer.prototype.scheduleLoadPrimingPages = function() {
   'use strict';
-  if (this.task_.navigateUrls && this.task_.navigateUrls.length > 0) {
-    logger.debug('Starting priming pages');
-    var primingPages = this.task_.navigateUrls;
-    for (var i = 0; i < primingPages.length; i++) {
-      var primingPage = primingPages[i];
-      logger.debug('Priming page: ' + i);
-      this.runPrimingPage(primingPage);
+  this.app_.schedule('Priming Pages', function() {
+    if (this.task_.navigateUrls && this.task_.navigateUrls.length > 0) {
+      logger.debug('Starting priming pages');
+      var primingPages = this.task_.navigateUrls;
+      for (var i = 0; i < primingPages.length; i++) {
+        var primingPage = primingPages[i];
+        this.runPrimingPage(primingPage);
+      }
     }
-    logger.debug('Done priming pages');
-    this.pageLoadDonePromise_ = undefined;
-  }
+  }.bind(this));
 };
 
 /**
@@ -866,10 +866,14 @@ WebDriverServer.prototype.scheduleLoadPrimingPages = function() {
 WebDriverServer.prototype.runPrimingPage = function(primingPage) {
   'use strict';
   this.app_.schedule('Priming Url: ' + primingPage, function() {
+    this.isPrimingRun = true;
+    logger.debug('Priming Url: ' + primingPage);
     this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
     this.pageCommand_('navigate', {url: primingPage});
     return this.pageLoadDonePromise_.promise;
   }.bind(this));
+  this.waitForCoalesce_(webdriver, exports.WAIT_AFTER_ONLOAD_MS);
+  this.isPrimingRun = false;
 };
 /**
  * Runs the user script in a sandboxed environment.
