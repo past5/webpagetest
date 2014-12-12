@@ -816,12 +816,12 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
   this.scheduleSetDnsOverrides_();
   this.scheduleClearBrowserCacheAndCookies_();
 
-  this.blankBrowserPage();
-
   this.networkCommand_('enable');
   this.pageCommand_('enable');
 
   this.scheduleLoadPrimingPages();
+
+  this.blankBrowserPage();
 
   this.startVideoDevTools_();
   this.scheduleStartPacketCaptureIfRequested_();

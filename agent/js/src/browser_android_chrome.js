@@ -53,7 +53,8 @@ var CHROME_FLAGS = [
     // Disable external URL handlers from opening
     '--disable-external-intent-requests',
     // Disable UI bars (location, debugging, etc)
-    '--disable-infobars'
+    '--disable-infobars',
+    '--user-agent=\"Mozilla/5.0 (Linux; Android 4.4.2; SAMSUNG-SGH-I747 Build/KOT49H) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.90 Mobile Safari/537.36\"'
   ];
 
 var KNOWN_BROWSERS = {
