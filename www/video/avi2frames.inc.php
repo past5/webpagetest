@@ -115,31 +115,45 @@ function Video2PNG($infile, $outdir, $crop) {
   $ret = false;
   $oldDir = getcwd();
   chdir($outdir);
-
-  $command = "ffmpeg -v debug -i \"$infile\" -vsync 0 -vf \"fps=fps=60$crop,scale=iw*min(400/iw\,400/ih):ih*min(400/iw\,400/ih),decimate\" \"$outdir/img-%d.png\" 2>&1";
-  $result;
-  exec($command, $output, $result);
+  
+  // figure out which decimate filter we need to use (originally it was called decimate but then renamed to mpdecimate)
+  $decimate = null;
+  exec('ffmpeg -filters', $output, $result);
   if ($output && is_array($output) && count($output)) {
-    $frameCount = 0;
     foreach ($output as $line) {
-      if (preg_match('/keep pts:(?P<timecode>[0-9]+)/', $line, $matches)) {
-        $frameCount++;
-        $frameTime = ceil((intval($matches['timecode']) * 1000) / 60);
-        $src = "$outdir/img-$frameCount.png";
-        $destFile = "video-" . sprintf("%06d", $frameTime) . ".png";
-        $dest = "$outdir/$destFile";
-        if (is_file($src)) {
-          $ret = true;
-          rename($src, $dest);
-        }
+      if (preg_match('/(?P<filter>[mp]*decimate).*V->V.*Remove near-duplicate frames/', $line, $matches)) {
+        $decimate = $matches['filter'];
+        break;
       }
     }
   }
 
-  $junkImages = glob("$outdir/img*.png");
-  if ($junkImages && is_array($junkImages) && count($junkImages)) {
-    foreach ($junkImages as $img)
-      unlink($img);
+  if (isset($decimate)) {
+    $command = "ffmpeg -v debug -i \"$infile\" -vsync 0 -vf \"$decimate=hi=0:lo=0:frac=0,scale=iw*min(400/iw\,400/ih):ih*min(400/iw\,400/ih)\" \"$outdir/img-%d.png\" 2>&1";
+    $result;
+    exec($command, $output, $result);
+    if ($output && is_array($output) && count($output)) {
+      $frameCount = 0;
+      foreach ($output as $line) {
+        if (preg_match('/keep pts:[0-9]+ pts_time:(?P<timecode>[0-9\.]+)/', $line, $matches)) {
+          $frameCount++;
+          $frameTime = ceil($matches['timecode'] * 1000);
+          $src = "$outdir/img-$frameCount.png";
+          $destFile = "video-" . sprintf("%06d", $frameTime) . ".png";
+          $dest = "$outdir/$destFile";
+          if (is_file($src)) {
+            $ret = true;
+            rename($src, $dest);
+          }
+        }
+      }
+    }
+
+    $junkImages = glob("$outdir/img*.png");
+    if ($junkImages && is_array($junkImages) && count($junkImages)) {
+      foreach ($junkImages as $img)
+        unlink($img);
+    }
   }
   chdir($oldDir);
   return $ret;
@@ -225,8 +239,6 @@ function IsOrangeAVIFrame($file) {
 * @param mixed $videoDir
 */
 function EliminateDuplicateAVIFiles($videoDir, $viewport) {
-  $previousFile = null;
-  $files = glob("$videoDir/image*.png");
   $crop = '+0+55';
   if (isset($viewport)) {
     // Ignore a 4-pixel header on the actual viewport to allow for the progress bar and
@@ -239,19 +251,8 @@ function EliminateDuplicateAVIFiles($videoDir, $viewport) {
     $width = max($viewport['width'] - $rightMargin, 1);
     $crop = "{$width}x{$height}+{$left}+{$top}";
   }
-  
-  // Do a first pass that eliminates frames with duplicate content.
-  foreach ($files as $file) {
-    $duplicate = false;
-    if (isset($previousFile))
-      $duplicate = AreAVIFramesDuplicate($previousFile, $file, 0, $crop);
-    if ($duplicate)
-      unlink($file);
-    else
-      $previousFile = $file;
-  }
-  
-  // Do a second pass looking for the first non-blank frame with an allowance
+
+  // Do a first pass looking for the first non-blank frame with an allowance
   // for up to a 2% per-pixel difference for noise in the white field.
   $files = glob("$videoDir/image*.png");
   $blank = $files[0];
@@ -263,7 +264,7 @@ function EliminateDuplicateAVIFiles($videoDir, $viewport) {
       break;
   }
   
-  // Do a third pass looking for the last frame but with an allowance for up
+  // Do a second pass looking for the last frame but with an allowance for up
   // to a 10% difference in individual pixels to deal with noise around text.
   $files = glob("$videoDir/image*.png");
   $files = array_reverse($files);
@@ -284,6 +285,19 @@ function EliminateDuplicateAVIFiles($videoDir, $viewport) {
       foreach ($duplicates as $file)
         unlink($file);
     }
+  }
+
+  // Do a third pass that eliminates frames with duplicate content.
+  $previousFile = null;
+  $files = glob("$videoDir/image*.png");
+  foreach ($files as $file) {
+    $duplicate = false;
+    if (isset($previousFile))
+      $duplicate = AreAVIFramesDuplicate($previousFile, $file, 0, $crop);
+    if ($duplicate)
+      unlink($file);
+    else
+      $previousFile = $file;
   }
 }
 

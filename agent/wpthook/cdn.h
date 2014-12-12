@@ -46,6 +46,12 @@ typedef struct {
 CDN_PROVIDER cdnList[] = {
   {".akamai.net", "Akamai"},
   {".akamaiedge.net", "Akamai"},
+  {".akamaihd.net", "Akamai"},
+  {".edgesuite.net", "Akamai"},
+  {".edgekey.net", "Akamai"},
+  {".srip.ne", "Akamai"},
+  {".akamaitechnologies.com", "Akamai"},
+  {".akamaitechnologies.fr", "Akamai"},
   {".llnwd.net", "Limelight"},
   {"edgecastcdn.net", "Edgecast"},
   {".systemcdn.net", "Edgecast"},
@@ -67,6 +73,7 @@ CDN_PROVIDER cdnList[] = {
   {"youtube.", "Google"},
   {".googleusercontent.com", "Google"},
   {"googlehosted.com", "Google"},
+  {".gstatic.com", "Google"},
   {".insnw.net", "Instart Logic"},
   {".inscname.net", "Instart Logic"},
   {".internapcdn.net", "Internap"},
@@ -119,6 +126,8 @@ CDN_PROVIDER cdnList[] = {
   {".nyiftw.net", "NYI FTW"},
   {".nyiftw.com", "NYI FTW"},
   {".resrc.it", "ReSRC.it"},
+  {".zenedge.net", "Zenedge"},
+  {".lswcdn.net", "LeaseWeb CDN"},  
   {"END_MARKER", "END_MARKER"}
 };
 
@@ -136,5 +145,7 @@ CDN_PROVIDER_HEADER cdnHeaderList[] = {
   {"X-Edge-IP", "", "CDN"},
   {"X-Edge-Location", "", "CDN"},
   {"X-Powered-By", "NYI FTW", "NYI FTW"},
-  {"server", "ReSRC", "ReSRC.it"}
+  {"server", "ReSRC", "ReSRC.it"},
+  {"X-Cdn", "Zenedge", "Zenedge"},
+  {"server", "leasewebcdn", "LeaseWeb CDN"}
 };

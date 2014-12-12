@@ -6,6 +6,12 @@ typedef struct {
 CDN_PROVIDER cdnList[] = {
 	{".akamai.net", _T("Akamai")},
 	{".akamaiedge.net", _T("Akamai")},
+  {".akamaihd.net", _T("Akamai")},
+  {".edgesuite.net", _T("Akamai")},
+  {".edgekey.net", _T("Akamai")},
+  {".srip.ne", _T("Akamai")},
+  {".akamaitechnologies.com", _T("Akamai")},
+  {".akamaitechnologies.fr", _T("Akamai")},
 	{".llnwd.net", _T("Limelight")},
 	{"edgecastcdn.net", _T("Edgecast")},
 	{".systemcdn.net", _T("Edgecast")},
@@ -27,6 +33,7 @@ CDN_PROVIDER cdnList[] = {
 	{"youtube.", _T("Google")},
 	{".googleusercontent.com", _T("Google")},
 	{"googlehosted.com", _T("Google")},
+	{".gstatic.com", _T("Google")},
 	{".insnw.net", _T("Instart Logic")},
 	{".inscname.net", _T("Instart Logic")},
 	{".internapcdn.net", _T("Internap")},
@@ -79,6 +86,8 @@ CDN_PROVIDER cdnList[] = {
   {".nyiftw.net", _T("NYI FTW")},
   {".nyiftw.com", _T("NYI FTW")},
   {".resrc.it", _T("ReSRC.it")},
+  {".zenedge.net", _T("Zenedge")},
+  {".lswcdn.net", _T("LeaseWeb CDN")},  
   {NULL, NULL}
 };
 
@@ -101,5 +110,7 @@ CDN_PROVIDER_HEADER cdnHeaderList[] = {
   {"X-Edge-IP", "", _T("CDN")},
   {"X-Edge-Location", "", _T("CDN")},
   {"X-Powered-By", "NYI FTW", _T("NYI FTW")},
-  {"server", "ReSRC", _T("ReSRC.it")}
+  {"server", "ReSRC", _T("ReSRC.it")},
+  {"X-Cdn", "Zenedge", _T("Zenedge")},
+  {"server", "leasewebcdn", _T("LeaseWeb CDN")}
 };

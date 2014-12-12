@@ -11,7 +11,7 @@ if(extension_loaded('newrelic')) {
 }
 
 chdir('..');
-include 'common_lib.inc';
+include 'common.inc';
 error_reporting(0);
 set_time_limit(600);
 $is_json = array_key_exists('f', $_GET) && $_GET['f'] == 'json';
@@ -40,6 +40,8 @@ if (isset($locations) && is_array($locations) && count($locations) &&
     (!array_key_exists('freedisk', $_GET) || (float)$_GET['freedisk'] > 0.1)) {
   shuffle($locations);
   $location = trim($locations[0]);
+  if (!$is_done && array_key_exists('reboot', $_GET))
+    $is_done = GetReboot();
   if (!$is_done && array_key_exists('ver', $_GET))
     $is_done = GetUpdate();
   if (!$is_done && @$_GET['video'])
@@ -324,6 +326,7 @@ function CheckCron() {
   // open and lock the cron job file - abandon quickly if we can't get a lock
   $should_run = false;
   $minutes15 = false;
+  $minutes60 = false;
   $cron_lock = Lock("Cron Check", false, 1200);
   if (isset($cron_lock)) {
     $last_run = 0;
@@ -342,6 +345,9 @@ function CheckCron() {
           $minute = gmdate('i', $now) % 15;
           if ($minute < 2)
             $minutes15 = true;
+          $minute = gmdate('i', $now) % 60;
+          if ($minute < 2)
+            $minutes60 = true;
         }
       }
     }
@@ -355,10 +361,13 @@ function CheckCron() {
     if (is_file('./settings/benchmarks/benchmarks.txt') && 
         is_file('./benchmarks/cron.php'))
       SendAsyncRequest('/benchmarks/cron.php');
+    SendAsyncRequest('/cron/5min.php');
     if (is_file('./jpeginfo/cleanup.php'))
       SendAsyncRequest('/jpeginfo/cleanup.php');
     if ($minutes15)
       SendAsyncRequest('/cron/15min.php');
+    if ($minutes60)
+      SendAsyncRequest('/cron/hourly.php');
   }
 }
 
@@ -429,5 +438,29 @@ function ProcessTestShard(&$testInfo, &$test, &$delete) {
         $delete = false;
     }
   }
+}
+
+/**
+* See if we need to reboot this tester
+* 
+*/
+function GetReboot() {
+  global $location;
+  global $pc;
+  global $ec2;
+  $rebooted = false;
+  $name = @strlen($ec2) ? $ec2 : $pc;
+  if (isset($name) && strlen($name) && isset($location) && strlen($location)) {
+    $rebootFile = "./work/jobs/$location/$name.reboot";
+    if (is_file($rebootFile)) {
+      unlink($rebootFile);
+      header('Content-type: text/plain');
+      header("Cache-Control: no-cache, must-revalidate");
+      header("Expires: Sat, 26 Jul 1997 05:00:00 GMT");
+      echo "Reboot";
+      $rebooted = true;
+    }
+  }
+  return $rebooted;
 }
 ?>

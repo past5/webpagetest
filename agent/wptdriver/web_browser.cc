@@ -252,6 +252,7 @@ bool WebBrowser::RunAndWait() {
         _browser_process = NULL;
       }
       LeaveCriticalSection(&cs);
+      TerminateProcessesByName(PathFindFileName((LPCTSTR)_browser._exe));
 
       SetBrowserExe(NULL);
       ResetIpfw();
@@ -273,6 +274,7 @@ bool WebBrowser::RunAndWait() {
   Delete the user profile as well as the flash and silverlight caches
 -----------------------------------------------------------------------------*/
 void WebBrowser::ClearUserData() {
+  TerminateProcessesByName(PathFindFileName((LPCTSTR)_browser._exe));
   _browser.ResetProfile(_test._clear_certs);
   TCHAR path[MAX_PATH];
   if (SUCCEEDED(SHGetFolderPath(NULL, CSIDL_APPDATA, NULL, 
@@ -538,6 +540,20 @@ void WebBrowser::ConfigureIESettings() {
 		}
 
 		if (RegCreateKeyEx(HKEY_CURRENT_USER,
+        _T("Software\\Microsoft\\Internet Explorer\\PhishingFilter"), 0, 0, 0,
+        KEY_WRITE, 0, &hKey, 0) == ERROR_SUCCESS) {
+			DWORD val = 0;
+			RegSetValueEx(hKey, _T("EnabledV9"), 0, REG_DWORD,
+                    (const LPBYTE)&val, sizeof(val));
+			RegSetValueEx(hKey, _T("Enabled"), 0, REG_DWORD,
+                    (const LPBYTE)&val, sizeof(val));
+      val = 3;
+			RegSetValueEx(hKey, _T("ShownVerifyBalloon"), 0, REG_DWORD,
+                    (const LPBYTE)&val, sizeof(val));
+			RegCloseKey(hKey);
+		}
+
+		if (RegCreateKeyEx(HKEY_CURRENT_USER,
         _T("Software\\Microsoft\\Internet Explorer\\IntelliForms"), 0, 0, 0,
         KEY_WRITE, 0, &hKey, 0) == ERROR_SUCCESS) {
 			DWORD val = 0;
@@ -630,6 +646,16 @@ void WebBrowser::ConfigureIESettings() {
 			RegSetValueEx(hKey, _T("1609"), 0, REG_DWORD, (const LPBYTE)&val,
                     sizeof(val));
 
+			RegCloseKey(hKey);
+		}
+
+    // Disable the blocking of ActiveX controls (which seems to be inconsistent)
+		if (RegCreateKeyEx(HKEY_CURRENT_USER,
+        _T("Software\\Microsoft\\Windows\\CurrentVersion\\Policies\\Ext"),
+        0, 0, 0, KEY_WRITE, 0, &hKey, 0) == ERROR_SUCCESS) {
+			DWORD val = 0;
+			RegSetValueEx(hKey, _T("VersionCheckEnabled"), 0, REG_DWORD,
+                    (const LPBYTE)&val, sizeof(val));
 			RegCloseKey(hKey);
 		}
 }
