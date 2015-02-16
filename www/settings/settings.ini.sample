@@ -42,6 +42,10 @@ allowPrivate=1
 ; Server Config
 ; *************
 
+; Host name to use for URLs when it can not be automatically detected.
+; This is mostly for auto-scaling EC2 instances to tell the agents what server to connect to
+;host=www.webpagetest.org
+
 ; disable gzip compressing the result text files
 ;nogzip=1
 
@@ -147,12 +151,19 @@ allowPrivate=1
 ; Start an EC2 instance for every X tests in the queue (up to the location max)
 ;EC2.ScaleFactor=100
 
-; Default location when using EC2 auto-scaling
+; Default location when using EC2 auto-scaling - this setting is required for auto-scaling
 ;EC2.default=us-east-1
 
 ; Per-location minimum and maximum EC2 instance counts.
 ; By default the minimum will be 0 and the maximum will be 1.
 ; This needs to be specified for every location where you want
 ; different settings (EC2.<location>.min/max).
+; Don't forget to also set the EC2.default region to enable auto-scaling.
 ;EC2.us-east-1.min=0
 ;EC2.us-east-1.max=1
+
+; Per-location Security Group and Subnet IDs to enable launching into VPCs 
+; (note that this will pin your instances to the availability zone associated with 
+; the subnet). This is required only if you do not have a default VPC.
+;EC2.us-west-2.securityGroup=sg-a0011b223,sg-b1122c334
+;EC2.us-west-2.subnetId=subnet-aaa0011bc1

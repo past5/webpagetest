@@ -16,10 +16,12 @@ function GenerateHAR($id, $testPath, $options) {
       if (!strcasecmp($options["run"],'median')) {
         $raw = loadAllPageData($testPath);
         $run = GetMedianRun($raw, $options['cached'], $median_metric);
-        if (!$run)
-          $run = 1;
         unset($raw);
+      } else {
+        $run = intval($options["run"]);
       }
+      if (!$run)
+        $run = 1;
       $pageData[$run] = array();
       if( isset($options['cached']) ) {
         $pageData[$run][$options['cached']] = loadPageRunData($testPath, $run, $options['cached']);
@@ -54,6 +56,10 @@ function GenerateHAR($id, $testPath, $options) {
       else
         $json = json_encode($harData, JSON_UNESCAPED_UNICODE);
     } else {    
+      $jsonLib = new Services_JSON();
+      $json = $jsonLib->encode($harData);
+    }
+    if ($json === false) {
       $jsonLib = new Services_JSON();
       $json = $jsonLib->encode($harData);
     }
@@ -327,7 +333,7 @@ function BuildHAR(&$pageData, $id, $testPath, $options) {
             for( $i = 0; $i < $zip->numFiles; $i++ ) {
               $index = intval($zip->getNameIndex($i), 10) - 1;
               if (array_key_exists($index, $entries))
-                $entries[$index]['response']['content']['text'] = $zip->getFromIndex($i);
+                $entries[$index]['response']['content']['text'] = utf8_encode($zip->getFromIndex($i));
             }
           }
         }

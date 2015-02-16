@@ -70,14 +70,16 @@ function GetLocationKey($location) {
         $locations = LoadLocationsIni();
         if ($locations !== false &&
             is_array($locations) &&
-            array_key_exists($location, $locations) &&
-            array_key_exists('key', $locations[$location])) {
-          $key = $locations[$location]['key'];
-        }
-        if (!isset($key)) {
-          $default_key = GetSetting('location_key');
-          if ($default_key)
-            $key = $default_key;
+            isset($locations[$location])) {
+          if (isset($locations[$location]['key'])) {
+            $key = $locations[$location]['key'];
+          } else {
+            $default_key = GetSetting('location_key');
+            if ($default_key)
+              $key = $default_key;
+            else
+              $key = '';
+          }
         }
         apc_store("key_$location", $key, 60);
       }
@@ -85,14 +87,16 @@ function GetLocationKey($location) {
       $locations = LoadLocationsIni();
       if ($locations !== false &&
           is_array($locations) &&
-          array_key_exists($location, $locations) &&
-          array_key_exists('key', $locations[$location])) {
-        $key = $locations[$location]['key'];
-      }
-      if (!isset($key)) {
-        $default_key = GetSetting('location_key');
-        if ($default_key)
-          $key = $default_key;
+          isset($locations[$location])) {
+        if (isset($locations[$location]['key'])) {
+          $key = $locations[$location]['key'];
+        } else {
+          $default_key = GetSetting('location_key');
+          if ($default_key)
+            $key = $default_key;
+          else
+            $key = '';
+        }
       }
     }
   }
@@ -1628,7 +1632,7 @@ function SaveJobQueue($workDir, &$queue)
 *
 * @param mixed $dir
 */
-function GetTesters($locationId)
+function GetTesters($locationId, $includeOffline = false)
 {
     $location = array();
 
@@ -1650,9 +1654,17 @@ function GetTesters($locationId)
             $location['testers'] = array();
             foreach( $testers as $id => $tester )
             {
-                if( !array_key_exists('offline', $tester) || !$tester['offline'] )
+                if( $includeOffline || !array_key_exists('offline', $tester) || !$tester['offline'] )
                 {
-                    $entry = array('pc' => @$tester['pc'], 'ec2' => @$tester['ec2'], 'ip' => @$tester['ip'], 'version' => @$tester['ver'], 'freedisk' => @$tester['freedisk'], 'ie' => @$tester['ie'], 'dns' => @$tester['dns'], 'GPU' => @$tester['GPU']);
+                    $entry = array('pc' => @$tester['pc'],
+                                   'ec2' => @$tester['ec2'],
+                                   'ip' => @$tester['ip'],
+                                   'version' => @$tester['ver'],
+                                   'freedisk' => @$tester['freedisk'],
+                                   'ie' => @$tester['ie'],
+                                   'dns' => @$tester['dns'],
+                                   'GPU' => @$tester['GPU'],
+                                   'offline' => @$tester['offline']);
 
                     if (array_key_exists('cpu', $tester) && is_array($tester['cpu'])) {
                       $total = 0;
@@ -1709,6 +1721,11 @@ function GetTesters($locationId)
             }
         }
     }
+    
+    if (isset($location['elapsed']) && $location['elapsed'] < 60)
+      $location['status'] = 'OK';
+    else
+      $location['status'] = 'OFFLINE';
 
     return $location;
 }
@@ -2594,6 +2611,48 @@ function SBL_Check($url, &$message) {
           break;
         }
       }
+    }
+  }
+  return $ok;
+}
+
+/**
+* Check to see if we can use the python visual metrics processing script
+* 
+*/
+function CheckPythonVisualMetrics(&$failures) {
+  $ok = false;
+  $failures = null;
+  if (function_exists('apc_fetch')) {
+    $ok = apc_fetch("PythonVisualMetrics");
+  }
+  if (!$ok) {
+    if (is_file(__DIR__ . '/video/visualmetrics.py')) {
+      $script = realpath(__DIR__ . '/video/visualmetrics.py');
+      $command = "python \"$script\" -c 2>&1";
+      exec($command, $output, $result);
+      if (isset($output) && is_array($output) && count($output)) {
+        foreach ($output as $line) {
+          $parts = explode(':', $line);
+          if (count($parts) == 2) {
+            $module = trim($parts[0]);
+            $status = trim($parts[1]);
+            if ($status == 'OK') {
+              $ok = true;
+            } else {
+              if (!isset($failures))
+                $failures = array();
+              $failures[] = $module;
+            }
+          }
+        }
+      }
+    }
+    if (isset($failures)) {
+      $ok = false;
+    }
+    if ($ok && function_exists('apc_store')) {
+      apc_store("PythonVisualMetrics", $ok, 3600);
     }
   }
   return $ok;
