@@ -239,78 +239,83 @@ Agent.prototype.scheduleProcessDone_ = function(ipcMsg, job) {
  */
 Agent.prototype.startJobRun_ = function(job) {
   'use strict';
-  // ??? job.isCacheWarm = !!this.wdServer_;
-  logger.info('%s run %d%s/%d of job %s',
-        (job.retryError ? 'Retrying' : 'Starting'), job.runNumber,
-        (job.isFirstViewOnly ? '' : (job.isCacheWarm ? 'b' : 'a')),
-        job.runs, job.id);
-        
-  if (this.wdServer_ && !job.isCacheWarm) {
-      if (!job.retryError) {
-        throw new Error('Internal error: unclean non-retry first view');
+  this.app_.schedule('Start run', function() {
+
+    // ??? job.isCacheWarm = !!this.wdServer_;
+    logger.info('%s run %d%s/%d of job %s',
+          (job.retryError ? 'Retrying' : 'Starting'), job.runNumber,
+          (job.isFirstViewOnly ? '' : (job.isCacheWarm ? 'b' : 'a')),
+          job.runs, job.id);
+
+    if (this.wdServer_ && !job.isCacheWarm) {
+        if (!job.retryError) {
+          throw new Error('Internal error: unclean non-retry first view');
+        }
+        logger.debug('Cleaning before repeat first-view');
+        this.scheduleCleanup_(job, /*isEndOfJob=*/false);
       }
-      logger.debug('Cleaning before repeat first-view');
-      this.scheduleCleanup_(job, /*isEndOfJob=*/false);
-    }
 
 
-  this.scheduleCleanRunTempDir_();
-  if (!job.isCacheWarm) {
-    if (job.isReplay) {
-      if (job.runNumber === 0) {
-        this.webPageReplay_.scheduleStop();  // Force-stop WPR before record..
-        this.webPageReplay_.scheduleRecord();
+    this.scheduleCleanRunTempDir_();
+    if (!job.isCacheWarm) {
+      if (job.isReplay) {
+        if (job.runNumber === 0) {
+          this.webPageReplay_.scheduleStop();  // Force-stop WPR before record..
+          this.webPageReplay_.scheduleRecord();
+        } else if (job.runNumber === 1) {
+          this.webPageReplay_.scheduleReplay();  // Start replay on first run.
+        }
+      } else if (job.runNumber === 1) {  // WPR not requested, just force-stop it.
+        process_utils.scheduleNoFault(
+            this.app_, 'Stop WPR just in case, ignore failures', function() {
+          this.webPageReplay_.scheduleStop();
+        }.bind(this));
+      }
+
+      if (job.isReplay && job.runNumber === 0) {
+          this.stopTrafficShaper_();  // Don't shape the recording.
       } else if (job.runNumber === 1) {
-        this.webPageReplay_.scheduleReplay();  // Start replay on first run.
+        if (this.isTrafficShaping_(job)) {
+          this.startTrafficShaper_(job);  // Start shaping.
+        } else if (!job.isReplay) {
+          this.stopTrafficShaper_();  // Force-stop the shaper.
+        }
       }
-    } else if (job.runNumber === 1) {  // WPR not requested, just force-stop it.
-      process_utils.scheduleNoFault(
-          this.app_, 'Stop WPR just in case, ignore failures', function() {
-        this.webPageReplay_.scheduleStop();
+
+      this.app_.schedule('Start WD Server',
+            this.startWdServer_.bind(this, job));
+
+    }
+
+    var script = job.task.script;
+    var url = job.task.url;
+    var setDnsOverrides;
+    var navigateUrls;
+    var pac;
+    if (script && !/new\s+(\S+\.)?Builder\s*\(/.test(script)) {
+      var decodedScript = this.decodeScript_(script);
+      url = decodedScript.url;
+      pac = decodedScript.pac;
+      script = undefined;
+      setDnsOverrides = decodedScript.setDnsOverrides;
+      navigateUrls = decodedScript.navigateUrls;
+    }
+    url = url.trim();
+    if (!((/^https?:\/\//i).test(url))) {
+      url = 'http://' + url;
+    }
+
+    this.app_.schedule('Send IPC "run"', function() {
+
+        // Copy our flags and task
+      var flags = {};
+      Object.getOwnPropertyNames(this.flags_).forEach(function(flagName) {
+        flags[flagName] = this.flags_[flagName];
       }.bind(this));
-    }
-
-    if (job.isReplay && job.runNumber === 0) {
-        this.stopTrafficShaper_();  // Don't shape the recording.
-    } else if (job.runNumber === 1) {
-      if (this.isTrafficShaping_(job)) {
-        this.startTrafficShaper_(job);  // Start shaping.
-      } else if (!job.isReplay) {
-        this.stopTrafficShaper_();  // Force-stop the shaper.
-      }
-    }
-    
-    this.app_.schedule('Start WD Server',
-          this.startWdServer_.bind(this, job));
-
-  }
-  var script = job.task.script;
-  var url = job.task.url;
-  var setDnsOverrides;
-  var navigateUrls;
-  var pac;
-  if (script && !/new\s+(\S+\.)?Builder\s*\(/.test(script)) {
-    var decodedScript = this.decodeScript_(script);
-    url = decodedScript.url;
-    pac = decodedScript.pac;
-    script = undefined;
-    setDnsOverrides = decodedScript.setDnsOverrides;
-    navigateUrls = decodedScript.navigateUrls;
-  }
-  url = url.trim();
-  if (!((/^https?:\/\//i).test(url))) {
-    url = 'http://' + url;
-  }
-  this.scheduleNoFault_('Send IPC "run"', function() {
-    // Copy our flags and task
-    var flags = {};
-    Object.getOwnPropertyNames(this.flags_).forEach(function(flagName) {
-      flags[flagName] = this.flags_[flagName];
-    }.bind(this));
-    var task = {};
-    Object.getOwnPropertyNames(job.task).forEach(function(key) {
-      task[key] = job.task[key];
-    }.bind(this));
+      var task = {};
+      Object.getOwnPropertyNames(job.task).forEach(function(key) {
+        task[key] = job.task[key];
+      }.bind(this));
 
       // Override some task fields:
       if (!!script) {
@@ -339,16 +344,16 @@ Agent.prototype.startJobRun_ = function(job) {
       delete task.navigateUrls;
     }
 
-      var message = {
-          cmd: 'run',
-          runNumber: job.runNumber,
-          isCacheWarm: job.isCacheWarm,
-          exitWhenDone: job.isFirstViewOnly || job.isCacheWarm,
-          timeout: this.client_.jobTimeout,
-          runTempDir: this.runTempDir_,
-          flags: flags,
-          task: task
-        };
+    var message = {
+        cmd: 'run',
+        runNumber: job.runNumber,
+        isCacheWarm: job.isCacheWarm,
+        exitWhenDone: job.isFirstViewOnly || job.isCacheWarm,
+        timeout: this.client_.jobTimeout,
+        runTempDir: this.runTempDir_,
+        flags: flags,
+        task: task
+      };
       this.wdServer_.send(message);
     }.bind(this));
   }.bind(this)).addErrback(function(e) {
