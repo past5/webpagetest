@@ -620,7 +620,8 @@ WebDriverServer.prototype.devToolsCommand_ = function(command) {
   var sender = (function(callback) {
     return this.devTools_.sendCommand(command, callback);
   }.bind(this));
-  return process_utils.scheduleFunction(this.app_, command.method, sender);
+  return process_utils.scheduleFunctionNoFault(
+      this.app_, command.method, sender);
 };
 
 /**
@@ -978,9 +979,13 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
       var coalesceMillis = (undefined === this.task_.waitAfterOnload ?
           exports.WAIT_AFTER_ONLOAD_MS :
           (1000 * Math.floor(parseFloat(this.task_.waitAfterOnload, 10))));
+      logger.debug("Waiting up to " + this.timeout_ +
+                   "ms for the page to load");
       this.timeoutTimer_ = global.setTimeout(
           this.onPageLoad_.bind(this, new Error('Page load timeout')),
           this.timeout_ - coalesceMillis);
+    } else {
+      logger.debug("No page load timeout set (unexpected)");
     }
     this.onTestStarted_();
     this.pageCommand_('navigate', {url: this.task_.url});
@@ -1091,7 +1096,10 @@ WebDriverServer.prototype.connect = function() {
     // Likely from a background function that's not ControlFlow-scheduled.
     // Immediately unwind the app's scheduled functions, as if the currently
     // function task threw this exception.
-    logger.error('Top-level process uncaught exception: %s', e.message);
+    if (e && e['message'])
+      logger.error('Top-level process uncaught exception: %s', e.message);
+    else
+      logger.error('Top-level process uncaught exception');
     var promise = new webdriver.promise.Deferred(undefined, this.app_);
     promise.reject(e);  // Like throw, only in the ControlFlow.
   }.bind(this));

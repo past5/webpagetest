@@ -20,6 +20,13 @@ function GetVisualProgress($testPath, $run, $cached, $options = null, $end = nul
     $cache_file = "$testPath/$run.$cached.visual.dat";
     if (!isset($startOffset))
       $startOffset = 0;
+    $visual_data_file = "$testPath/llab_$run.$cached.visual.dat";
+    if (gz_is_file($visual_data_file)) {
+      $visual_data = json_decode(gz_file_get_contents($visual_data_file), true);
+      // see if we are processing an externally-uploaded visual data file
+      if (isset($visual_data['timespans']['page_load']['startOffset']))
+        $startOffset += $visual_data['timespans']['page_load']['startOffset'];
+    }
     $dirty = false;
     $current_version = VIDEO_CODE_VERSION;
     if (isset($end)) {
@@ -36,69 +43,88 @@ function GetVisualProgress($testPath, $run, $cached, $options = null, $end = nul
             unset($frames);
     }    
     $base_path = substr($video_directory, 1);
-    if ((!isset($frames) || !count($frames)) && is_dir($video_directory)) {
+    if ((!isset($frames) || !count($frames)) && (is_dir($video_directory) || gz_is_file("$testPath/$run.$cached.histograms.json"))) {
         $frames = array('version' => $current_version);
         $frames['frames'] = array();
         $dirty = true;
-        $files = scandir($video_directory);
-        $last_file = null;
-        $first_file = null;
-        $previous_file = null;
-        foreach ($files as $file) {
-            if (strpos($file,'frame_') !== false && strpos($file,'.hist') === false) {
-                $parts = explode('_', $file);
-                if (count($parts) >= 2) {
-                    $time = (((int)$parts[1]) * 100) - $startOffset;
-                    if ($time >= 0 && (!isset($end) || $time <= $end)) {
-                      if (isset($previous_file) && !array_key_exists(0, $frames['frames']) && $time > 0) {
-                        $frames['frames'][0] = array('path' => "$base_path/$previous_file",
-                                                     'file' => $previous_file);
-                        $first_file = $previous_file;
-                      } elseif (!isset($first_file))
-                        $first_file = $file;
-                      $last_file = $file;
-                      $frames['frames'][$time] = array('path' => "$base_path/$file",
-                                                       'file' => $file);
-                    }
-                    $previous_file = $file;
-                }
-            } elseif (strpos($file,'ms_') !== false && strpos($file,'.hist') === false) {
-                $parts = explode('_', $file);
-                if (count($parts) >= 2) {
-                    $time = intval($parts[1]) - $startOffset;
-                    if ($time >= 0 && (!isset($end) || $time <= $end)) {
-                      if (isset($previous_file) && !array_key_exists(0, $frames['frames']) && $time > 0) {
-                        $frames['frames'][0] = array('path' => "$base_path/$previous_file",
-                                                     'file' => $previous_file);
-                        $first_file = $previous_file;
-                      } elseif (!isset($first_file))
-                        $first_file = $file;
-                      $last_file = $file;
-                      $frames['frames'][$time] = array('path' => "$base_path/$file",
-                                                       'file' => $file);
-                    }
-                    $previous_file = $file;
-                }
-            }
-        }
-        if (count($frames['frames']) == 1) {
-            foreach($frames['frames'] as $time => &$frame) {
-                $frame['progress'] = 100;
-                $frames['complete'] = $time;
-            }
-        } elseif (isset($first_file) && strlen($first_file) &&
-                  isset($last_file) && strlen($last_file) && count($frames['frames'])) {
-            $histograms = null;
-            if (gz_is_file("$testPath/$run.$cached.histograms.json"))
-              $histograms = json_decode(gz_file_get_contents("$testPath/$run.$cached.histograms.json"), true);
-            $start_histogram = GetImageHistogram("$video_directory/$first_file", $options, $histograms);
-            $final_histogram = GetImageHistogram("$video_directory/$last_file", $options, $histograms);
-            foreach($frames['frames'] as $time => &$frame) {
-                $histogram = GetImageHistogram("$video_directory/{$frame['file']}", $options, $histograms);
-                $frame['progress'] = CalculateFrameProgress($histogram, $start_histogram, $final_histogram, 5);
-                if ($frame['progress'] == 100 && !array_key_exists('complete', $frames))
-                    $frames['complete'] = $time;
-            }
+        if (is_dir($video_directory)) {
+          $files = scandir($video_directory);
+          $last_file = null;
+          $first_file = null;
+          $previous_file = null;
+          foreach ($files as $file) {
+              if (strpos($file,'frame_') !== false && strpos($file,'.hist') === false) {
+                  $parts = explode('_', $file);
+                  if (count($parts) >= 2) {
+                      $time = (((int)$parts[1]) * 100) - $startOffset;
+                      if ($time >= 0 && (!isset($end) || $time <= $end)) {
+                        if (isset($previous_file) && !array_key_exists(0, $frames['frames']) && $time > 0) {
+                          $frames['frames'][0] = array('path' => "$base_path/$previous_file",
+                                                       'file' => $previous_file);
+                          $first_file = $previous_file;
+                        } elseif (!isset($first_file))
+                          $first_file = $file;
+                        $last_file = $file;
+                        $frames['frames'][$time] = array('path' => "$base_path/$file",
+                                                         'file' => $file);
+                      }
+                      $previous_file = $file;
+                  }
+              } elseif (strpos($file,'ms_') !== false && strpos($file,'.hist') === false) {
+                  $parts = explode('_', $file);
+                  if (count($parts) >= 2) {
+                      $time = intval($parts[1]) - $startOffset;
+                      if ($time >= 0 && (!isset($end) || $time <= $end)) {
+                        if (isset($previous_file) && !array_key_exists(0, $frames['frames']) && $time > 0) {
+                          $frames['frames'][0] = array('path' => "$base_path/$previous_file",
+                                                       'file' => $previous_file);
+                          $first_file = $previous_file;
+                        } elseif (!isset($first_file))
+                          $first_file = $file;
+                        $last_file = $file;
+                        $frames['frames'][$time] = array('path' => "$base_path/$file",
+                                                         'file' => $file);
+                      }
+                      $previous_file = $file;
+                  }
+              }
+          }
+          if (count($frames['frames']) == 1) {
+              foreach($frames['frames'] as $time => &$frame) {
+                  $frame['progress'] = 100;
+                  $frames['complete'] = $time;
+              }
+          } elseif (isset($first_file) && strlen($first_file) &&
+                    isset($last_file) && strlen($last_file) && count($frames['frames'])) {
+              $histograms = null;
+              if (gz_is_file("$testPath/$run.$cached.histograms.json"))
+                $histograms = json_decode(gz_file_get_contents("$testPath/$run.$cached.histograms.json"), true);
+              $start_histogram = GetImageHistogram("$video_directory/$first_file", $options, $histograms);
+              $final_histogram = GetImageHistogram("$video_directory/$last_file", $options, $histograms);
+              foreach($frames['frames'] as $time => &$frame) {
+                  $histogram = GetImageHistogram("$video_directory/{$frame['file']}", $options, $histograms);
+                  $frame['progress'] = CalculateFrameProgress($histogram, $start_histogram, $final_histogram, 5);
+                  if ($frame['progress'] == 100 && !array_key_exists('complete', $frames))
+                      $frames['complete'] = $time;
+              }
+          }
+        } elseif (gz_is_file("$testPath/$run.$cached.histograms.json")) {
+          $raw = json_decode(gz_file_get_contents("$testPath/$run.$cached.histograms.json"), true);
+          $histograms = array();
+          foreach ($raw as $h) {
+            if (isset($h['time']) && isset($h['histogram']))
+              $histograms[$h['time']] = $h['histogram'];
+          }
+          ksort($histograms, SORT_NUMERIC);
+          $final_histogram = end($histograms);
+          $start_histogram = reset($histograms);
+          foreach ($histograms as $time => $histogram) {
+            $frames['frames'][$time] = array();
+            $progress = CalculateFrameProgress($histogram, $start_histogram, $final_histogram, 5);
+            $frames['frames'][$time]['progress'] = $progress;
+            if ($progress == 100 && !isset($frames['complete']))
+              $frames['complete'] = $time;
+          }
         }
     }
     if (isset($frames) && !array_key_exists('SpeedIndex', $frames)) {
@@ -131,6 +157,10 @@ function GetImageHistogram($image_file, $options, $histograms) {
   $ext = strripos($image_file, '.jpg');
   if ($ext !== false) {
       $histogram_file = substr($image_file, 0, $ext) . '.hist';
+  } else {
+    $ext = strripos($image_file, '.png');
+    if ($ext !== false)
+        $histogram_file = substr($image_file, 0, $ext) . '.hist';
   }
   
   if (isset($histograms)) {

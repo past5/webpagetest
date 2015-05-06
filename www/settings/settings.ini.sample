@@ -23,11 +23,22 @@ tcpdump_view="http://cloudshark.org/view?url="
 
 enableVideo=1
 
+;Full Size Video capturing - enabled (1) or disable (0)
+fullSizeVideoOn=1
+;Full Size Video - default checkbox state - ticked (1) or unticked (0)
+fullSizeVideoDefault=0
+
 ; Run tests concurrently across test machines
 ;shard_tests=1
 
 ; Maximum number of runs allowed per test
 maxruns=9
+
+; Maximum amount of time for a test run (if requested by timeout=X)
+maxtime=600
+
+; Maximum server load to allow when rendering video on the server
+render_max_load=8
 
 ; Allow (1) or disable (0) testing of sites on private IP addresses (http://192.168.0.1/ for example).
 allowPrivate=1

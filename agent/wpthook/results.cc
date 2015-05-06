@@ -222,17 +222,17 @@ void Results::SaveImages(void) {
   // save the event-based images
   CxImage image;
   if (_screen_capture.GetImage(CapturedImage::START_RENDER, image))
-    SaveImage(image, _file_base + IMAGE_START_RENDER, _test._image_quality);
+    SaveImage(image, _file_base + IMAGE_START_RENDER, _test._image_quality, false, _test._full_size_video);
   if (_screen_capture.GetImage(CapturedImage::DOCUMENT_COMPLETE, image))
-    SaveImage(image, _file_base + IMAGE_DOC_COMPLETE, _test._image_quality);
+    SaveImage(image, _file_base + IMAGE_DOC_COMPLETE, _test._image_quality, false, _test._full_size_video);
   if (_screen_capture.GetImage(CapturedImage::FULLY_LOADED, image)) {
     if (_test._png_screen_shot)
       image.Save(_file_base + IMAGE_FULLY_LOADED_PNG, CXIMAGE_FORMAT_PNG);
-    SaveImage(image, _file_base + IMAGE_FULLY_LOADED, _test._image_quality);
+    SaveImage(image, _file_base + IMAGE_FULLY_LOADED, _test._image_quality, false, _test._full_size_video);
   }
   if (_screen_capture.GetImage(CapturedImage::RESPONSIVE_CHECK, image)) {
     SaveImage(image, _file_base + IMAGE_RESPONSIVE_CHECK, _test._image_quality,
-              true);
+              true, _test._full_size_video);
   }
 
   SaveVideo();
@@ -242,11 +242,14 @@ void Results::SaveImages(void) {
 -----------------------------------------------------------------------------*/
 void Results::SaveVideo(void) {
   _screen_capture.Lock();
+  CStringA histograms = "[";
+  DWORD histogram_count = 0;
   CxImage * last_image = NULL;
   DWORD width, height;
   CString file_name;
   POSITION pos = _screen_capture._captured_images.GetHeadPosition();
   while (pos) {
+    CStringA histogram;
     CapturedImage& image = _screen_capture._captured_images.GetNext(pos);
     if (image._type != CapturedImage::RESPONSIVE_CHECK) {
       CxImage * img = new CxImage;
@@ -268,24 +271,43 @@ void Results::SaveVideo(void) {
           if (ImagesAreDifferent(last_image, img)) {
             if (!_test_state._render_start.QuadPart)
               _test_state._render_start.QuadPart = image._capture_time.QuadPart;
+            histogram = GetHistogramJSON(*img);
             if (_test._video) {
               _visually_complete.QuadPart = image._capture_time.QuadPart;
               file_name.Format(_T("%s_progress_%04d.jpg"), (LPCTSTR)_file_base, 
                                 image_time);
-              SaveImage(*img, file_name, _test._image_quality);
-              file_name.Format(_T("%s_progress_%04d.hist"), (LPCTSTR)_file_base, 
-                                image_time);
-              SaveHistogram(*img, file_name);
+              SaveImage(*img, file_name, _test._image_quality, false, _test._full_size_video);
             }
           }
         } else {
           width = img->GetWidth();
           height = img->GetHeight();
           // always save the first image at time zero
-          file_name = _file_base + _T("_progress_0000.jpg");
-          SaveImage(*img, file_name, _test._image_quality);
-          file_name = _file_base + _T("_progress_0000.hist");
-          SaveHistogram(*img, file_name);
+          image_time = 0;
+          image_time_ms = 0;
+          histogram = GetHistogramJSON(*img);
+          if (_test._video) {
+            file_name = _file_base + _T("_progress_0000.jpg");
+            SaveImage(*img, file_name, _test._image_quality, false, _test._full_size_video);
+          }
+        }
+
+        if (!histogram.IsEmpty()) {
+          if (histogram_count)
+            histograms += ", ";
+          histograms += "{\"histogram\": ";
+          histograms += histogram;
+          histograms += ", \"time\": ";
+          CStringA buff;
+          buff.Format("%d", image_time_ms);
+          histograms += buff;
+          histograms += "}";
+          histogram_count++;
+          if (_test._video) {
+            file_name.Format(_T("%s_progress_%04d.hist"), (LPCTSTR)_file_base,
+                             image_time);
+            SaveHistogram(histogram, file_name);
+          }
         }
 
         if (last_image)
@@ -299,6 +321,20 @@ void Results::SaveVideo(void) {
 
   if (last_image)
     delete last_image;
+
+  if (histogram_count > 1) {
+    histograms += "]";
+    TCHAR path[MAX_PATH];
+    lstrcpy(path, _file_base);
+    TCHAR * file = PathFindFileName(path);
+    int run = _tstoi(file);
+    if (run) {
+      int cached = _tcsstr(file, _T("_Cached")) ? 1 : 0;
+      *file = 0;
+      file_name.Format(_T("%s%d.%d.histograms.json"), path, run, cached);
+      SaveHistogram(histograms, file_name);
+    }
+  }
 
   _screen_capture.Unlock();
 }
@@ -334,11 +370,12 @@ bool Results::ImagesAreDifferent(CxImage * img1, CxImage* img2) {
 /*-----------------------------------------------------------------------------
 -----------------------------------------------------------------------------*/
 void Results::SaveImage(CxImage& image, CString file, BYTE quality,
-                        bool force_small) {
+                        bool force_small, bool _full_size_video) {
   if (image.IsValid()) {
     CxImage img(image);
-    if (force_small || (img.GetWidth() > 600 && img.GetHeight() > 600))
-      img.Resample2(img.GetWidth() / 2, img.GetHeight() / 2);
+    if (!_full_size_video)
+      if (force_small || (img.GetWidth() > 600 && img.GetHeight() > 600))
+        img.Resample2(img.GetWidth() / 2, img.GetHeight() / 2);
 
     img.SetCodecOption(8, CXIMAGE_FORMAT_JPG);  // optimized encoding
     img.SetCodecOption(16, CXIMAGE_FORMAT_JPG); // progressive
@@ -347,10 +384,12 @@ void Results::SaveImage(CxImage& image, CString file, BYTE quality,
   }
 }
 
+
 /*-----------------------------------------------------------------------------
-  Save the image histogram as a json data structure (ignoring white pixels)
+  Calculate the image histogram as a json data structure (ignoring white pixels)
 -----------------------------------------------------------------------------*/
-void Results::SaveHistogram(CxImage& image, CString file) {
+CStringA Results::GetHistogramJSON(CxImage& image) {
+  CStringA histogram;
   if (image.IsValid()) {
     DWORD r[256], g[256], b[256];
     for (int i = 0; i < 256; i++) {
@@ -390,10 +429,18 @@ void Results::SaveHistogram(CxImage& image, CString file) {
     red += "]";
     green += "]";
     blue += "]";
-    CStringA histogram = CStringA("{") + red + 
-                         CStringA(",") + green + 
-                         CStringA(",") + blue + CStringA("}");
+    histogram = CStringA("{") + red + 
+                CStringA(",") + green + 
+                CStringA(",") + blue + CStringA("}");
+  }
+  return histogram;
+}
 
+/*-----------------------------------------------------------------------------
+  Save the image histogram as a json data structure (ignoring white pixels)
+-----------------------------------------------------------------------------*/
+void Results::SaveHistogram(CStringA& histogram, CString file) {
+  if (!histogram.IsEmpty()) {
     HANDLE file_handle = CreateFile(file, GENERIC_WRITE, 0, 0, 
                                     CREATE_ALWAYS, 0, 0);
     if (file_handle != INVALID_HANDLE_VALUE) {

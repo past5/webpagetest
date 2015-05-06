@@ -59,8 +59,6 @@ function ProcessAVIVideo(&$test, $testPath, $run, $cached) {
   $crop = '';
   if (!is_file($videoFile))
     $videoFile = "$testPath/$run{$cachedText}_video.avi";
-  if (!is_file($videoFile))
-    $videoFile = "$testPath/$run{$cachedText}_appurify.mp4";
     
   if (is_file($videoFile)) {
     $videoDir = "$testPath/video_$run" . strtolower($cachedText);
@@ -72,7 +70,9 @@ function ProcessAVIVideo(&$test, $testPath, $run, $cached) {
       $videoFile = realpath($videoFile);
       $videoDir = realpath($videoDir);
       if (strlen($videoFile) && strlen($videoDir)) {
-        if (!PythonVisualMetrics($videoFile, $videoDir, $testPath, $run, $cached)) {
+        if (PythonVisualMetrics($videoFile, $videoDir, $testPath, $run, $cached)) {
+          unlink($videoFile);
+        } else {
           $crop = FindVideoCrop($videoFile, $videoDir);
           if (Video2PNG($videoFile, $videoDir, $crop)) {
             $startOffset = DevToolsGetVideoOffset($testPath, $run, $cached, $endTime);
@@ -81,7 +81,7 @@ function ProcessAVIVideo(&$test, $testPath, $run, $cached) {
             $lastImage = ProcessVideoFrames($videoDir, $viewport);
             $screenShot = "$testPath/$run{$cachedText}_screen.jpg";
             if (isset($lastImage) && is_file($lastImage)) {
-              //unlink($videoFile);
+              unlink($videoFile);
               if (!is_file($screenShot))
                 copy($lastImage, $screenShot);
             }

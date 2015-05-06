@@ -12,7 +12,6 @@ chdir('..');
 //$debug = true;
 require_once('common.inc');
 require_once('archive.inc');
-require_once('./lib/pclzip.lib.php');
 require_once 'page_data.inc';
 require_once('object_detail.inc');
 require_once('harTiming.inc');
@@ -148,8 +147,12 @@ if (ValidateTestId($id)) {
             ProcessUploadedHAR($testPath);
           } else {
             logMsg(" Extracting uploaded file '{$_FILES['file']['tmp_name']}' to '$testPath'\n");
-            $archive = new PclZip($_FILES['file']['tmp_name']);
-            $list = $archive->extract(PCLZIP_OPT_PATH, "$testPath/", PCLZIP_OPT_REMOVE_ALL_PATH);
+            $zip = new ZipArchive();
+            if ($zip->open($_FILES['file']['tmp_name']) === TRUE) {
+                $extractPath = realpath($testPath);
+                $zip->extractTo($extractPath);
+                $zip->close();
+            }
           }
         }
 
@@ -233,10 +236,10 @@ if (ValidateTestId($id)) {
           $secure = false;
           $haveLocations = false;
           $requests = getRequests($id, $testPath, $runNumber, $cacheWarmed, $secure, $haveLocations, false);
-          if (isset($requests)) {
+          if (isset($requests) && is_array($requests) && count($requests)) {
             getBreakdown($id, $testPath, $runNumber, $cacheWarmed, $requests);
           } else {
-            $testerError = true;
+            $testerError = 'Missing Results';
           }
           if (is_dir('./google') && is_file('./google/google_lib.inc')) {
             require_once('google/google_lib.inc');
@@ -272,7 +275,11 @@ if (ValidateTestId($id)) {
             $testerError = $_REQUEST['testerror'];
           elseif (array_key_exists('error', $_REQUEST) && strlen($_REQUEST['error']))
             $testerError = $_REQUEST['error'];
-          UpdateTester($location, $tester, $testerInfo, $cpu, $testerError);
+          // clear the rebooted flag on the first successful test
+          $rebooted = null;
+          if ($testerError === false)
+            $rebooted = false;
+          UpdateTester($location, $tester, $testerInfo, $cpu, $testerError, $rebooted);
         }
                 
         // see if the test is complete
@@ -442,54 +449,17 @@ function KeepVideoForRun($testPath, $run)
 
 function ProcessUploadedHAR($testPath)
 {
-    require_once('./lib/pcltar.lib.php3');
-    require_once('./lib/pclerror.lib.php3');
-    require_once('./lib/pcltrace.lib.php3');
-    global $done;
-    global $flattenUploadedZippedHar;
-
     // From the mobile agents we get the zip file with sub-folders
-    if( isset($_FILES['file']) )
-    {
-        //var_dump($_FILES['file']);
-        logMsg(" Extracting uploaded file '{$_FILES['file']['tmp_name']}' to '$testPath'\n");
-        if ($_FILES['file']['type'] == "application/tar" || preg_match("/\.tar$/",$_FILES['file']['name']))
-        {
-            PclTarExtract($_FILES['file']['tmp_name'],"$testPath","/","tar");
-        }
-        else if (preg_match("/\.zip$/",$_FILES['file']['name']))
-        {
-            $archive = new PclZip($_FILES['file']['tmp_name']);
-            if ($flattenUploadedZippedHar)
-            {
-                // PCLZIP_OPT_REMOVE_ALL_PATH causes any directory structure
-                // within the zip to be flattened.  Different agents have
-                // slightly different directory layout, but all file names
-                // are guaranteed to be unique.  Flattening allows us to avoid
-                // directory traversal.
-                // TODO(skerner): Find out why the blaze agents have different
-                // directory structure and make it consistent, and remove
-                // $flattenUploadedZippedHar as an option.
-                $archive->extract(PCLZIP_OPT_PATH, "$testPath/",
-                                  PCLZIP_OPT_REMOVE_ALL_PATH);
-            }
-            else
-            {
-                logMalformedInput("Depricated har upload path.  Agents should ".
-                                  "set flattenZippedHar=1.");
-                $archive->extract(PCLZIP_OPT_PATH, "$testPath/");
-            }
-        }
-        else
-        {
-            move_uploaded_file($_FILES['file']['tmp_name'],
-                               $testPath . "/" . $_FILES['file']['name']);
-        }
+    if( isset($_FILES['file']) ) {
+      logMsg(" Extracting uploaded file '{$_FILES['file']['tmp_name']}' to '$testPath'\n");
+      if (preg_match("/\.zip$/",$_FILES['file']['name'])) {
+        ZipExtract($_FILES['file']['tmp_name'], $testPath);
+      } else {
+        move_uploaded_file($_FILES['file']['tmp_name'], $testPath . "/" . $_FILES['file']['name']);
+      }
     }
 
-    // The HAR may hold multiple page loads.
-    $harIsFromSinglePageLoad = false;
-    ProcessHARText($testPath, $harIsFromSinglePageLoad);
+    ProcessHARText($testPath, false);
 }
 
 function ProcessHARText($testPath, $harIsFromSinglePageLoad)

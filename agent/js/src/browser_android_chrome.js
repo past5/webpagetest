@@ -54,7 +54,9 @@ var CHROME_FLAGS = [
     '--disable-external-intent-requests',
     // Disable UI bars (location, debugging, etc)
     '--disable-infobars',
-    '--user-agent=\"Mozilla/5.0 (Linux; Android 4.4.2; SAMSUNG-SGH-I747 Build/KOT49H) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.90 Mobile Safari/537.36\"'
+    '--user-agent=\"Mozilla/5.0 (Linux; Android 4.4.2; SAMSUNG-SGH-I747 Build/KOT49H) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.90 Mobile Safari/537.36\"',
+    // Disable the save password dialog
+    '--disable-save-password-bubble'
   ];
 
 var KNOWN_BROWSERS = {
@@ -127,6 +129,7 @@ function BrowserAndroidChrome(app, args) {
   this.devToolsPort_ = args.flags.devToolsPort;
   this.devtoolsPortLock_ = undefined;
   this.devToolsUrl_ = undefined;
+  this.hostsFile_ = args.task.hostsFile;
   this.serverPort_ = args.flags.serverPort;
   this.serverPortLock_ = undefined;
   this.serverUrl_ = undefined;
@@ -184,6 +187,7 @@ BrowserAndroidChrome.prototype.startWdServer = function(browserCaps) {
         'http://127.0.0.1:' + PAC_PORT + '/from_netcat');
   }
   this.kill();
+  this.scheduleConfigureHostsFile_();
   this.scheduleInstallIfNeeded_();
   this.scheduleConfigureServerPort_();
   // Must be scheduled, since serverPort_ is assigned in a scheduled function.
@@ -216,6 +220,7 @@ BrowserAndroidChrome.prototype.startBrowser = function() {
   // Stop Chrome at the start of each run.
   // TODO(wrightt): could keep the devToolsPort and pacServer up
   this.kill();
+  this.scheduleConfigureHostsFile_();
   this.scheduleInstallIfNeeded_();
   this.scheduleStartPacServer_();
   this.scheduleSetStartupFlags_();
@@ -267,6 +272,41 @@ BrowserAndroidChrome.prototype.clearProfile_ = function() {
     }.bind(this));
     //this.adb_.su(['rm', '/data/local/chrome-command-line']);
   }
+};
+
+/**
+ * Configures /etc/hosts to match the desired hosts file (for content
+ * blocking, SPOF testing or DNS override).
+ * @private
+ */
+BrowserAndroidChrome.prototype.scheduleConfigureHostsFile_ = function() {
+  this.app_.schedule('Configure hosts file', function() {
+    if (this.hostsFile_ !== undefined && this.hostsFile_.length) {
+      this.adb_.shell(['cat', '/etc/hosts']).then(
+          function(stdout) {
+        if (stdout.trim() != this.hostsFile_.trim()) {
+          logger.debug("Rewriting /etc/hosts");
+          logger.debug("Current hosts file: " + stdout);
+          logger.debug("New hosts file: " + this.hostsFile_);
+          var localHostsFile = path.join(this.runTempDir_, 'wpt_hosts');
+          process_utils.scheduleFunction(this.app_, 'Write local hosts file',
+              fs.writeFile, localHostsFile, this.hostsFile_);
+          this.adb_.getStoragePath().then(function(storagePath) {
+            var tempHostsFile = storagePath + '/wpt_hosts';
+            this.adb_.adb(['push', localHostsFile, tempHostsFile]);
+            process_utils.scheduleFunction(this.app_, 'Delete local hosts file',
+                fs.unlink, localHostsFile);
+            this.adb_.su(['chown', 'root:root', tempHostsFile]);
+            this.adb_.su(['chmod', '644', tempHostsFile]);
+            this.adb_.su(['mount', '-o', 'rw,remount', '/system']);
+            this.adb_.su(['cp', tempHostsFile, '/etc/hosts']);
+            this.adb_.su(['mount', '-o', 'ro,remount', '/system']);
+            this.adb_.su(['rm', tempHostsFile]);
+          }.bind(this));
+        }
+      }.bind(this));
+    }
+  }.bind(this));
 };
 
 /**
@@ -322,30 +362,32 @@ BrowserAndroidChrome.prototype.scheduleNeedsXvfb_ = function() {
  */
 BrowserAndroidChrome.prototype.scheduleSetStartupFlags_ = function() {
   'use strict';
-  var flagsFile = '/data/local/chrome-command-line';
-  var flags = this.chromeFlags_.concat('--enable-remote-debugging');
-  if (this.pac_) {
-    flags.push('--proxy-pac-url=http://127.0.0.1:' + PAC_PORT + '/from_netcat');
-    if (PAC_PORT !== 80) {
-      logger.warn('Non-standard PAC port might not work: ' + PAC_PORT);
-      flags.push('--explicitly-allowed-ports=' + PAC_PORT);
+  this.app_.schedule('Configure startup flags', function() {
+    var flagsFile = '/data/local/chrome-command-line';
+    var flags = this.chromeFlags_.concat('--enable-remote-debugging');
+    if (this.pac_) {
+      flags.push('--proxy-pac-url=http://127.0.0.1:' + PAC_PORT + '/from_netcat');
+      if (PAC_PORT !== 80) {
+        logger.warn('Non-standard PAC port might not work: ' + PAC_PORT);
+        flags.push('--explicitly-allowed-ports=' + PAC_PORT);
+      }
     }
-  }
-  var localFlagsFile = path.join(this.runTempDir_, 'wpt_chrome_command_line');
-  var flagsString = 'chrome ' + flags.join(' ');
-  if (this.additionalFlags_) {
-    flagsString += ' ' + this.additionalFlags_;
-  }
-  process_utils.scheduleFunction(this.app_, 'Write local flags file',
-      fs.writeFile, localFlagsFile, flagsString);
-  this.adb_.getStoragePath().then(function(storagePath) {
-    var tempFlagsFile = storagePath + '/wpt_chrome_command_line';
-    this.adb_.adb(['push', localFlagsFile, tempFlagsFile]);
-    process_utils.scheduleFunction(this.app_, 'Delete local flags file',
-        fs.unlink, localFlagsFile);
-    this.adb_.su(['cp', tempFlagsFile, flagsFile]);
-    this.adb_.shell(['rm', tempFlagsFile]);
-    this.adb_.su(['chmod', '666', flagsFile]);
+    var localFlagsFile = path.join(this.runTempDir_, 'wpt_chrome_command_line');
+    var flagsString = 'chrome ' + flags.join(' ');
+    if (this.additionalFlags_) {
+      flagsString += ' ' + this.additionalFlags_;
+    }
+    process_utils.scheduleFunction(this.app_, 'Write local flags file',
+        fs.writeFile, localFlagsFile, flagsString);
+    this.adb_.getStoragePath().then(function(storagePath) {
+      var tempFlagsFile = storagePath + '/wpt_chrome_command_line';
+      this.adb_.adb(['push', localFlagsFile, tempFlagsFile]);
+      process_utils.scheduleFunction(this.app_, 'Delete local flags file',
+          fs.unlink, localFlagsFile);
+      this.adb_.su(['cp', tempFlagsFile, flagsFile]);
+      this.adb_.shell(['rm', tempFlagsFile]);
+      this.adb_.su(['chmod', '666', flagsFile]);
+    }.bind(this));
   }.bind(this));
 };
 
@@ -681,9 +723,8 @@ BrowserAndroidChrome.prototype.scheduleStartVideoRecording = function(
           if (!this.recordProcess_) {
             logger.debug('Normal exit via scheduleStopVideoRecording');
           } else {
-            err = new Error('Unexpected video recording EXIT with code ' +
+            logger.error('Unexpected video recording EXIT with code ' +
                 code + ' signal ' + signal);
-            logger.error(err.message);
           }
           this.recordProcess_ = undefined;
           if (onExit) {
@@ -707,10 +748,9 @@ BrowserAndroidChrome.prototype.scheduleStopVideoRecording = function() {
     this.app_.schedule('screenrecord kill issued', function() {
       if (recordProcess) {
         process_utils.scheduleWait(this.app_, recordProcess,
-            'screenrecord', 30000).then(function() {
-          this.adb_.adb(['pull', this.deviceVideoPath_, this.videoFile_]);
-        }.bind(this));
+            'screenrecord', 30000);
       }
+      this.adb_.adb(['pull', this.deviceVideoPath_, this.videoFile_]);
     }.bind(this));
   } else {
     this.video_.scheduleStopVideoRecording();

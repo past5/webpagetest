@@ -85,7 +85,8 @@ $page_description = "Website performance test result$testLabel.";
                     echo GetTestInfoHtml();
                     if( !$headless && gz_is_file("$testPath/testinfo.json") 
                         && !array_key_exists('published', $test['testinfo'])
-                        && ($isOwner || !$test['testinfo']['sensitive']) )
+                        && ($isOwner || !$test['testinfo']['sensitive'])
+                        && (!isset($test['testinfo']['type']) || !strlen($test['testinfo']['type'])) )
                     {
                         // load the secret key (if there is one)
                         $secret = '';
@@ -170,9 +171,12 @@ $page_description = "Website performance test result$testLabel.";
                         <th align="center" class="empty" valign="middle" style="border:1px white solid;"></th>
                         <?php
                         echo "<th align=\"center\" class=\"empty\" valign=\"middle\" colspan=\"$cols\"></th>\n";
+                        echo '<th align="center" class="border" valign="middle" colspan="3">Document Complete</th>';
+                        if (GetSetting('show_cost'))
+                          echo '<th align="center" class="border" valign="middle" colspan="4">Fully Loaded</th>';
+                        else
+                          echo '<th align="center" class="border" valign="middle" colspan="3">Fully Loaded</th>';
                         ?>
-                        <th align="center" class="border" valign="middle" colspan="3">Document Complete</th>
-                        <th align="center" class="border" valign="middle" colspan="3">Fully Loaded</th>
                     </tr>
                     <tr>
                         <th align="center" class="empty" valign="middle"></th>
@@ -200,6 +204,10 @@ $page_description = "Website performance test result$testLabel.";
                         <th align="center" class="border" valign="middle">Time</th>
                         <th align="center" valign="middle">Requests</th>
                         <th align="center" valign="middle">Bytes In</th>
+                        <?php
+                        if (GetSetting('show_cost'))
+                          echo '<th align="center" valign="middle">Cost</th>';
+                        ?>
                     </tr>
                     <tr>
                         <td align="left" valign="middle">First View
@@ -231,6 +239,14 @@ $page_description = "Website performance test result$testLabel.";
                         echo "<td id=\"fvFullyLoaded\" class=\"border\" valign=\"middle\">" . formatMsInterval($pageData[$fvMedian][0]['fullyLoaded'], 3) . "</td>\n";
                         echo "<td id=\"fvRequests\" valign=\"middle\">" . number_format($pageData[$fvMedian][0]['requests'],0) . "</td>\n";
                         echo "<td id=\"fvBytes\" valign=\"middle\">" . number_format($pageData[$fvMedian][0]['bytesIn'] / 1024, 0) . " KB</td>\n";
+                        if (GetSetting('show_cost')) {
+                          echo "<td id=\"fvCost\" valign=\"middle\"><a title=\"Find out how much it costs for someone to use your site on mobile networks around the world.\" href=\"http://whatdoesmysitecost.com/test/$id\">";
+                          // one dollar sign for every 500KB
+                          $count = max(1, min(5, ceil($pageData[$fvMedian][0]['bytesIn'] / (500 * 1024))));
+                          for ($i = 1; $i <= 5; $i++)
+                            echo $i <= $count ? '$' : '-';
+                          echo "</a></td>\n";
+                        }
                         ?>
                     </tr>
                     <?php if( $rvMedian ) { ?>
@@ -267,6 +283,9 @@ $page_description = "Website performance test result$testLabel.";
                         echo "<td id=\"rvFullyLoaded\" class=\"even border\" valign=\"middle\">" . formatMsInterval($pageData[$rvMedian][1]['fullyLoaded'], 3) . "</td>\n";
                         echo "<td id=\"rvRequests\" class=\"even\" valign=\"middle\">" . number_format($pageData[$rvMedian][1]['requests'],0) . "</td>\n";
                         echo "<td id=\"rvBytes\" class=\"even\" valign=\"middle\">" . number_format($pageData[$rvMedian][1]['bytesIn'] / 1024, 0) . " KB</td>\n";
+                        if (GetSetting('show_cost')) {
+                          echo '<td></td>';
+                        }
                         ?>
                     </tr>
                     <?php } ?>
@@ -373,13 +392,7 @@ $page_description = "Website performance test result$testLabel.";
             for( $run = 1; $run <= $runs; $run++)
             {
                 $error_str = null;
-                if (array_key_exists('testinfo', $test) && 
-                    array_key_exists('errors', $test['testinfo']) && 
-                    array_key_exists($run, $test['testinfo']['errors']) && 
-                    array_key_exists(0, $test['testinfo']['errors'][$run]) && 
-                    strlen($test['testinfo']['errors'][$run][0])) {
-                    $error_str = 'Test Error: ' . $test['testinfo']['errors'][$run][0];
-                } elseif (!isset($pageData) || !is_array($pageData) || !array_key_exists($run, $pageData)) {
+                if (!isset($pageData) || !is_array($pageData) || !array_key_exists($run, $pageData)) {
                     if ($testComplete)
                         $error_str = 'Test Error: Data is missing.';
                     else
@@ -415,6 +428,8 @@ $page_description = "Website performance test result$testLabel.";
                         }
                         $first_displayed = true;
                         echo '<td align="left" valign="middle">First View';
+                        if (isset($test['testinfo']['errors'][$run][0]) && strlen($test['testinfo']['errors'][$run][0]))
+                            echo '<br>(Test Error: ' . htmlspecialchars($test['testinfo']['errors'][$run][0]) . ')';
                         if( isset($pageData[$run][0]['result']) && $pageData[$run][0]['result'] !== 0 && $pageData[$run][0]['result'] !== 99999 )
                             echo '<br>(Error: ' . LookupError($pageData[$run][0]['result']) . ')';
                         else if( isset($pageData[$run][0]['loadTime']) )
@@ -488,6 +503,8 @@ $page_description = "Website performance test result$testLabel.";
                   if( isset($pageData[$run][1]) ) { 
                       if (array_key_exists($run, $pageData) && array_key_exists(1, $pageData[$run]) && count($pageData[$run][1])) {
                           echo '<td align="left" class="even" valign="middle">Repeat View';
+                        if (isset($test['testinfo']['errors'][$run][1]) && strlen($test['testinfo']['errors'][$run][1]))
+                            echo '<br>(Test Error: ' . htmlspecialchars($test['testinfo']['errors'][$run][0]) . ')';
                           if( isset($pageData[$run][1]['result']) && $pageData[$run][1]['result'] !== 0 && $pageData[$run][1]['result'] !== 99999 )
                               echo '<br>(Error: ' . LookupError($pageData[$run][1]['result']) . ')';
                           else if( isset($pageData[$run][1]['loadTime']) )
