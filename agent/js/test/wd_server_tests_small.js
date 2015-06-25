@@ -408,7 +408,7 @@ describe('wd_server small', function() {
 
     // *   Verify we clear the cache, run, then keep our WD.
     should.ok(startChromeStub.calledOnce);
-    should.equal('chrome', startChromeStub.firstCall.args[0].browserName);
+    should.equal(startChromeStub.firstCall.args[0].browserName, 'chrome');
 
     should.ok(stubWebSocket.calledOnce);
     should.ok('ws://gaga', stubWebSocket.firstCall.args[0]);
@@ -430,7 +430,7 @@ describe('wd_server small', function() {
         [pageMessage, networkMessage, timelineMessage, pageLoadedMessage]);
     doneIpcMsg.screenshots.map(function(s) { return s.fileName; }).should.eql(
         ['screen.jpg']);
-    should.equal(1, writeFileStub.callCount);
+    should.equal(writeFileStub.callCount, 1);
 
     // We expect a kill Chrome and keep our agent.
     should.ok(killStub.calledOnce);

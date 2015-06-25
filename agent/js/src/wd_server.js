@@ -168,6 +168,7 @@ WebDriverServer.prototype.init = function(args) {
   this.exitWhenDone_ = args.exitWhenDone;
   this.isRecordingDevTools_ = false;
   this.pageLoadDonePromise_ = undefined;
+  this.isPrimingRun = false;
   this.pcapFile_ = undefined;
   this.runNumber_ = args.runNumber;
   this.isCacheWarm_ = args.isCacheWarm;
@@ -211,9 +212,11 @@ WebDriverServer.prototype.startWdServer_ = function(browserCaps) {
 
   // Check for getCapabilities().webdriver? But then what -- exception anyway,
   // so the Browser's startWdServer may as well throw that exception.
+  logger.debug('Starting WS Server');
   this.browser_.startWdServer(browserCaps);
   // The following needs to be scheduled() because getServerUrl() returns
   // the URL only after the startWdServer_() scheduled action finishes.
+  logger.debug('Wait for WD server to become ready');
   this.app_.schedule('Wait for WD server to become ready', function() {
     var serverUrl = this.browser_.getServerUrl();
     logger.info('WD server URL: %s', serverUrl);
@@ -322,7 +325,7 @@ WebDriverServer.prototype.onDevToolsMessage_ = function(message) {
   // message, as noted below, so ignore messages until our abortTimer fires.
   if (!this.abortTimer_) {
     if ('Page.loadEventFired' === message.method) {
-      if (this.isRecordingDevTools_) {
+      if (this.isRecordingDevTools_ || this.isPrimingRun) {
         this.onPageLoad_();
       }
     } else if ('Inspector.detached' === message.method) {
@@ -690,63 +693,56 @@ WebDriverServer.prototype.getCapabilities_ = function() {
 /**
  * Blanks out the browser at the beginning of a test, using DevTools.
  *
- * @private
  */
-WebDriverServer.prototype.clearPageAndStartVideoDevTools_ = function() {
+WebDriverServer.prototype.blankBrowserPage = function() {
   'use strict';
-  this.getCapabilities_().then(function(caps) {
-    if (!this.isCacheCleared_ && !this.isCacheWarm_) {
-      if (caps['wkrdp.Network.clearBrowserCache']) {
-        this.networkCommand_('clearBrowserCache');
-        this.app_.schedule('Cache cleared', function() {
-          this.isCacheCleared_ = true;
-        }.bind(this));
-      }
-      if (caps['wkrdp.Network.clearBrowserCookies']) {
-        this.networkCommand_('clearBrowserCookies');
-      }
-    }
-  }.bind(this));
   // Navigate to a blank, to make sure we clear the prior page and cancel
   // all pending events.  This isn't strictly required if startBrowser loads
   // "about:blank", but it's still a good idea.
   this.pageCommand_('navigate', {url: BLANK_PAGE_URL_});
   this.app_.timeout(500, 'Load blank startup page');
-  this.networkCommand_('enable');
-  this.pageCommand_('enable');
-  if (1 === this.task_['Capture Video']) {  // Emit video sync, start recording
-    this.getCapabilities_().then(function(caps) {
-      if (!caps.videoRecording) {
-        return;
-      }
-      // Get the root frameId
-      this.pageCommand_('getResourceTree').then(function(result) {
-        var frameId = result.frameTree.frame.id;
-        // Hold orange(500ms)->white: anchor video to DevTools.
+};
+
+/**
+ * Start recording video and enables the isRecordingDevTools_ flag
+ *
+ * @private
+ */
+WebDriverServer.prototype.startVideoDevTools_ = function() {
+  'use strict';
+  this.app_.schedule('Priming Pages', function() {
+    if (1 === this.task_['Capture Video']) {  // Emit video sync, start recording
+      this.getCapabilities_().then(function (caps) {
+        if (!caps.videoRecording) {
+          return;
+        }
+        // Get the root frameId
+        this.pageCommand_('getResourceTree').then(function (result) {
+          var frameId = result.frameTree.frame.id;
+          // Hold orange(500ms)->white: anchor video to DevTools.
         this.app_.schedule('Setting background to orange', function() {logger.debug('Setting background to orange');});
-        this.setPageBackground_(frameId, GHASTLY_ORANGE_);
-        this.app_.timeout(500, 'Set orange background');
-        this.scheduleStartVideoRecording_();
-        // Begin recording DevTools before onTestStarted_ fires,
-        // to make sure we get the paint event from the below switch to white.
-        // This allows us to sync the DevTools trace vs. the video by matching
-        // the first DevTools paint event timestamp to the video frame where
-        // the background changed from non-white to white.
-        this.app_.schedule('Start recording DevTools with video', function() {
+          this.setPageBackground_(frameId, GHASTLY_ORANGE_);
+          this.app_.timeout(500, 'Set orange background');
+          this.scheduleStartVideoRecording_();
+          // Begin recording DevTools before onTestStarted_ fires,
+          // to make sure we get the paint event from the below switch to white.
+          // This allows us to sync the DevTools trace vs. the video by matching
+          // the first DevTools paint event timestamp to the video frame where
+          // the background changed from non-white to white.
           this.isRecordingDevTools_ = true;
-        }.bind(this));
         this.app_.schedule('Start recording tracing', function() {
           this.scheduleStartTracingIfRequested_();
         }.bind(this));
-        this.app_.timeout(500, 'Hold orange background');
+          this.app_.timeout(500, 'Hold orange background');
         this.app_.schedule('Setting background to white', function() {logger.debug('Setting background to white');});
-        this.setPageBackground_(frameId);  // White
+          this.setPageBackground_(frameId);  // White
+        }.bind(this));
       }.bind(this));
-    }.bind(this));
-  }
-  // Make sure we start recording DevTools regardless of the video.
-  this.app_.schedule('Start recording DevTools', function() {
+    }
+
+    // Make sure we start recording DevTools regardless of the video.
     this.isRecordingDevTools_ = true;
+    logger.debug('Set isRecordingDevTools_');
   }.bind(this));
   this.app_.schedule('Start recording tracing', function() {
     this.scheduleStartTracingIfRequested_();
@@ -781,6 +777,27 @@ WebDriverServer.prototype.clearPageAndStartVideoWd_ = function() {
 };
 
 /**
+ * Clears browser cache and cookies
+ * @private
+ */
+WebDriverServer.prototype.scheduleClearBrowserCacheAndCookies_ = function() {
+  'use strict';
+  this.getCapabilities_().then(function(caps) {
+    if (!this.isCacheCleared_ && !this.isCacheWarm_) {
+      if (caps['wkrdp.Network.clearBrowserCache']) {
+        this.networkCommand_('clearBrowserCache');
+        this.app_.schedule('Cache cleared', function() {
+          this.isCacheCleared_ = true;
+        }.bind(this));
+      }
+      if (caps['wkrdp.Network.clearBrowserCookies']) {
+        this.networkCommand_('clearBrowserCookies');
+      }
+    }
+  }.bind(this));
+};
+
+/**
  * Starts browser tracing if it was requested, sets the tracing file.
  * @private
  */
@@ -791,6 +808,7 @@ WebDriverServer.prototype.scheduleStartTracingIfRequested_ = function() {
     this.traceData_ = {traceEvents: []};
     this.tracePromise_ = new webdriver.promise.Deferred();
     var message = {method: 'Tracing.start'};
+
     message.params = {
       categories: 'disabled-by-default-devtools.timeline,devtools.timeline,disabled-by-default-devtools.timeline.frame,devtools.timeline.frame',
       options: 'record-as-much-as-possible'
@@ -881,6 +899,21 @@ WebDriverServer.prototype.scheduleStartPacketCaptureIfRequested_ = function() {
   }
 };
 
+
+/**
+ * setDns overrides from script commands.
+ * @private
+ */
+WebDriverServer.prototype.scheduleSetDnsOverrides_ = function() {
+  'use strict';
+  if (this.task_.setDnsOverrides && this.task_.setDnsOverrides.length > 0) {
+    this.browser_.scheduleSetDnsOverrides(this.task_.setDnsOverrides);
+    this.app_.schedule('Setting DNS overrides', function() {
+      logger.debug('DNS overrides succeeded');
+    }.bind(this));
+  }
+};
+
 /**
  * @param {Object} browserCaps browser capabilities used to build the driver.
  * @private
@@ -890,7 +923,17 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
   if (!this.devTools_) {
     this.startChrome_(browserCaps);
   }
-  this.clearPageAndStartVideoDevTools_();
+  this.scheduleSetDnsOverrides_();
+  this.scheduleClearBrowserCacheAndCookies_();
+
+  this.networkCommand_('enable');
+  this.pageCommand_('enable');
+
+  this.scheduleLoadPrimingPages();
+
+  this.blankBrowserPage();
+
+  this.startVideoDevTools_();
   this.scheduleStartPacketCaptureIfRequested_();
   // No page load timeout here -- agent_main enforces run-level timeout.
   this.app_.schedule('Run page load', function() {
@@ -915,6 +958,40 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
   this.waitForCoalesce_(this.app_);
 };
 
+/**
+ * Loop through and load all the cache priming pages before
+ * the page to test is run. For flow testing.
+ */
+WebDriverServer.prototype.scheduleLoadPrimingPages = function() {
+  'use strict';
+  this.app_.schedule('Priming Pages', function() {
+    if (this.task_.navigateUrls && this.task_.navigateUrls.length > 0) {
+      logger.debug('Starting priming pages');
+      var primingPages = this.task_.navigateUrls;
+      for (var i = 0; i < primingPages.length; i++) {
+        var primingPage = primingPages[i];
+        this.runPrimingPage(primingPage);
+      }
+    }
+  }.bind(this));
+};
+
+/**
+ * Load a single cache priming page. For flow testing.
+ * @param {String} primingPage
+ */
+WebDriverServer.prototype.runPrimingPage = function(primingPage) {
+  'use strict';
+  this.app_.schedule('Priming Url: ' + primingPage, function() {
+    this.isPrimingRun = true;
+    logger.debug('Priming Url: ' + primingPage);
+    this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
+    this.pageCommand_('navigate', {url: primingPage});
+    return this.pageLoadDonePromise_.promise;
+  }.bind(this));
+  this.waitForCoalesce_(webdriver, exports.WAIT_AFTER_ONLOAD_MS);
+  this.isPrimingRun = false;
+};
 /**
  * Runs the user script in a sandboxed environment.
  *
@@ -1169,8 +1246,11 @@ WebDriverServer.prototype.done_ = function() {
       this.scheduleNoFault_('Stop packet capture',
           this.browser_.scheduleStopPacketCapture.bind(this.browser_));
     }
+  if (this.task_.setDnsOverrides && this.task_.setDnsOverrides.length > 0) {
+    this.browser_.scheduleClearDnsOverrides();
+  }
     this.scheduleNoFault_('Send IPC', function() {
-      exports.process.send({
+        exports.process.send({
           cmd: (this.testError_ ? 'error' : 'done'),
           testError: this.testError_,
           agentError: this.agentError_,

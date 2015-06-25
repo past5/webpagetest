@@ -126,6 +126,8 @@ Agent.prototype.scheduleNoFault_ = function(description, f) {
  */
 Agent.prototype.startWdServer_ = function(job) {
   'use strict';
+  // for debugging the wd_server code
+  // process.execArgv.push('--debug-brk=5859');
   this.wdServer_ = child_process.fork('./src/wd_server.js',
       [], {env: process.env});
   this.wdServer_.on('message', function(ipcMsg) {
@@ -136,6 +138,7 @@ Agent.prototype.startWdServer_ = function(job) {
       var isRunFinished = (
           job.isFirstViewOnly || job.isCacheWarm ||
           !!job.testError);  // Fail job if first-view fails.
+
       this.scheduleProcessDone_(ipcMsg, job);
       if (isRunFinished) {
         this.scheduleCleanup_(job, /*isEndOfJob=*/job.runNumber === job.runs);
@@ -359,17 +362,19 @@ Agent.prototype.startJobRun_ = function(job) {
     }
 
     logger.info('%s run %d%s/%d of job %s',
-        (job.retryError ? 'Retrying' : 'Starting'), job.runNumber,
-        (job.isFirstViewOnly ? '' : (job.isCacheWarm ? 'b' : 'a')),
-        job.runs, job.id);
+          (job.retryError ? 'Retrying' : 'Starting'), job.runNumber,
+          (job.isFirstViewOnly ? '' : (job.isCacheWarm ? 'b' : 'a')),
+          job.runs, job.id);
 
     if (this.wdServer_ && !job.isCacheWarm) {
-      if (!job.retryError) {
-        throw new Error('Internal error: unclean non-retry first view');
+        if (!job.retryError) {
+          throw new Error('Internal error: unclean non-retry first view');
+        }
+        logger.debug('Cleaning before repeat first-view');
+        this.scheduleCleanup_(job, /*isEndOfJob=*/false);
       }
-      logger.debug('Cleaning before repeat first-view');
-      this.scheduleCleanup_(job, /*isEndOfJob=*/false);
-    }
+
+
     this.scheduleCleanRunTempDir_();
 
     if (this.isTrafficShaping_(job)) {
@@ -386,18 +391,49 @@ Agent.prototype.startJobRun_ = function(job) {
         } else if (job.runNumber === 1) {
           this.webPageReplay_.scheduleReplay();  // Start replay on first run.
         }
-      } else if (job.runNumber === 1) {  // WPR not requested, so force-stop it.
+      } else if (job.runNumber === 1) {  // WPR not requested, just force-stop it.
         process_utils.scheduleNoFault(
             this.app_, 'Stop WPR just in case, ignore failures', function() {
           this.webPageReplay_.scheduleStop();
         }.bind(this));
       }
 
+      if (job.isReplay && job.runNumber === 0) {
+          this.stopTrafficShaper_();  // Don't shape the recording.
+      } else if (job.runNumber === 1) {
+        if (this.isTrafficShaping_(job)) {
+          this.startTrafficShaper_(job);  // Start shaping.
+        } else if (!job.isReplay) {
+          this.stopTrafficShaper_();  // Force-stop the shaper.
+        }
+      }
+
       this.app_.schedule('Start WD Server',
-          this.startWdServer_.bind(this, job));
+            this.startWdServer_.bind(this, job));
+
     }
+
+    var script = job.task.script;
+    var url = job.task.url;
+    var setDnsOverrides;
+    var navigateUrls;
+    var pac;
+    if (script && !/new\s+(\S+\.)?Builder\s*\(/.test(script)) {
+      var decodedScript = this.decodeScript_(script);
+      url = decodedScript.url;
+      pac = decodedScript.pac;
+      script = undefined;
+      setDnsOverrides = decodedScript.setDnsOverrides;
+      navigateUrls = decodedScript.navigateUrls;
+    }
+    url = url.trim();
+    if (!((/^https?:\/\//i).test(url))) {
+      url = 'http://' + url;
+    }
+
     this.app_.schedule('Send IPC "run"', function() {
-      // Copy our flags and task
+
+        // Copy our flags and task
       var flags = {};
       Object.getOwnPropertyNames(this.flags_).forEach(function(flagName) {
         flags[flagName] = this.flags_[flagName];
@@ -406,26 +442,42 @@ Agent.prototype.startJobRun_ = function(job) {
       Object.getOwnPropertyNames(job.task).forEach(function(key) {
         task[key] = job.task[key];
       }.bind(this));
+
       // Override some task fields:
       if (!!script) {
         task.script = script;
       } else {
         delete task.script;
       }
+
       if (!!url) {
         task.url = url;
       }
-      var message = {
-          cmd: 'run',
-          runNumber: job.runNumber,
-          isCacheWarm: job.isCacheWarm,
-          exitWhenDone: job.isFirstViewOnly || job.isCacheWarm,
+
+
+    if (!!setDnsOverrides) {
+      task.setDnsOverrides = setDnsOverrides;
+    } else {
+      delete task.setDnsOverrides;
+    }
+
+    if (!!navigateUrls) {
+      task.navigateUrls = navigateUrls;
+    } else {
+      delete task.navigateUrls;
+    }
+
+    var message = {
+        cmd: 'run',
+        runNumber: job.runNumber,
+        isCacheWarm: job.isCacheWarm,
+        exitWhenDone: job.isFirstViewOnly || job.isCacheWarm,
           timeout: job.timeout,
           customBrowser: job.customBrowser,
-          runTempDir: this.runTempDir_,
-          flags: flags,
-          task: task
-        };
+        runTempDir: this.runTempDir_,
+        flags: flags,
+        task: task
+      };
       this.wdServer_.send(message);
     }.bind(this));
   }.bind(this)).addErrback(function(e) {
@@ -504,6 +556,119 @@ Agent.prototype.scheduleCleanRunTempDir_ = function() {
           fs.unlink, filePath);
     }.bind(this));
   }.bind(this));
+};
+
+/**
+ * @param {string} message the error message.
+ * @constructor
+ * @see decodeUrlAndPacFromScript_
+ */
+function ScriptError(message) {
+  'use strict';
+  this.message = message;
+  this.stack = (new Error(message)).stack;
+}
+ScriptError.prototype = new Error();
+
+/**
+ * Parse the supported commands from WPT script.
+ *
+ * Currently supported are:
+ *
+ *   setDns hostName ipAddress
+ *
+ *   navigate url
+ *
+ *   pac fromHost toHost
+ *
+ * Blank lines and lines starting with "//" are ignored.  Lines starting with
+ * "if", "endif", and "addHeader" are also ignored for now, but this feature is
+ * deprecated and these commands will be rejected in a future.  Any other input
+ * will throw a ScriptError.
+ *
+ * @param {string} script e.g.:
+ *   setDns hostName ipAddress
+ *   navigate url.
+ * @return {Object} a URL and PAC object, e.g.:
+ *   {url:'http://x.com', pac:'function Find...'}.
+ * @private
+ */
+Agent.prototype.decodeScript_ = function(script) {
+  'use strict';
+  // Assign nulls to appease 'possibly uninitialized' warnings.
+  var url = null;
+  var pac = null;
+  var navigateUrls = [];
+  var setDnsOverrides = [];
+  script.split('\n').forEach(function(line, lineNumber) {
+
+    line = line.trim();
+    if (!line || 0 === line.indexOf('//')) {
+      return;
+    }
+
+    // find setDns commands
+    var m = line.match(/^setDns\s+(\S+)\s+(\S+)$/i);
+    if (m) {
+      var hostName = m[1];
+      var ipAddress = m[2];
+      setDnsOverrides.push([ipAddress, hostName]);
+      return;
+    }
+
+    // find navigate commands
+    m = line.match(/^navigate\s+(\S+)$/i);
+    if (m) {
+      navigateUrls.push(m[1]);
+      return;
+    }
+
+    // find pac commands
+    m = line.match(/^pac\s+(\S+)\s+(\S+)$/i);
+    if (m) {
+      var fromHost = m[1];
+      var toHost = m[2];
+      pac = 'function FindProxyForURL(url, host) {\n' +
+      '  if ("' + fromHost + '" === host) {\n' +
+        '    return "PROXY ' + toHost + '";\n' +
+      '  }\n' +
+        '  return "DIRECT";\n}\n';
+      return;
+    }
+
+    // log unsupported commands
+    logger.info('WPT script contains unsupported line[' +
+      lineNumber + ']: ' + line);
+
+    // error on unsupported commands
+    /*
+    throw new ScriptError('WPT script contains unsupported line[' +
+      lineNumber + ']: ' + line + '<br/>' +
+      '--- support is limited to:<br/>' +
+      '--- setDns [hostname] [ip]<br/>' +
+      '--- pac [fromHost] [toHost]<br/>' +
+      '--- navigate [url]');
+      */
+  });
+
+  if (navigateUrls.length > 0) {
+    // final navigate is our test url
+    url = navigateUrls[navigateUrls.length - 1];
+    // remove final navigate from priming runs
+    navigateUrls = navigateUrls.slice(0, navigateUrls.length - 1);
+  }
+
+  if (!url) {
+    throw new ScriptError('WPT script lacks navigate command');
+  }
+
+  logger.debug('');
+  return {
+    url: url,
+    pac: pac,
+    setDnsOverrides: setDnsOverrides,
+    navigateUrls: navigateUrls
+  };
 };
 
 /**
