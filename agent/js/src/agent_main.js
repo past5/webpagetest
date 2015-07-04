@@ -417,6 +417,7 @@ Agent.prototype.startJobRun_ = function(job) {
     var url = job.task.url;
     var setDnsOverrides;
     var navigateUrls;
+		var logDataCommands;
     var pac;
     if (script && !/new\s+(\S+\.)?Builder\s*\(/.test(script)) {
       var decodedScript = this.decodeScript_(script);
@@ -425,6 +426,7 @@ Agent.prototype.startJobRun_ = function(job) {
       script = undefined;
       setDnsOverrides = decodedScript.setDnsOverrides;
       navigateUrls = decodedScript.navigateUrls;
+			logDataCommands = decodedScript.logDataCommands;
     }
     url = url.trim();
     if (!((/^https?:\/\//i).test(url))) {
@@ -466,7 +468,13 @@ Agent.prototype.startJobRun_ = function(job) {
     } else {
       delete task.navigateUrls;
     }
-
+		
+		if (!!logDataCommands) {
+      task.logDataCommands = logDataCommands;
+    } else {
+      delete task.logDataCommands;
+    }
+		
     var message = {
         cmd: 'run',
         runNumber: job.runNumber,
@@ -600,6 +608,9 @@ Agent.prototype.decodeScript_ = function(script) {
   var pac = null;
   var navigateUrls = [];
   var setDnsOverrides = [];
+  var logDataCommands = [];
+  var lastLog = 1;
+	
   script.split('\n').forEach(function(line, lineNumber) {
 
     line = line.trim();
@@ -615,11 +626,23 @@ Agent.prototype.decodeScript_ = function(script) {
       setDnsOverrides.push([ipAddress, hostName]);
       return;
     }
-
+		
+		//we only look for logData command on a line before navigate
+		m = line.match(/^logData\s+(\S+)$/i);
+		if(m) {
+			lastLog = m[1];
+			logger.debug('logData match found: ' + lastLog);
+			return;
+		} 
+				
     // find navigate commands
     m = line.match(/^navigate\s+(\S+)$/i);
     if (m) {
       navigateUrls.push(m[1]);
+			
+			//always push last log value
+			logDataCommands.push(lastLog);
+			
       return;
     }
 
@@ -651,6 +674,7 @@ Agent.prototype.decodeScript_ = function(script) {
       */
   });
 
+
   if (navigateUrls.length > 0) {
     // final navigate is our test url
     url = navigateUrls[navigateUrls.length - 1];
@@ -667,7 +691,8 @@ Agent.prototype.decodeScript_ = function(script) {
     url: url,
     pac: pac,
     setDnsOverrides: setDnsOverrides,
-    navigateUrls: navigateUrls
+    navigateUrls: navigateUrls,
+		logDataCommands: logDataCommands
   };
 };
 

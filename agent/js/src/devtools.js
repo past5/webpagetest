@@ -219,6 +219,7 @@ DevTools.prototype.sendCommand = function(command, cb) {
  */
 DevTools.prototype.command_ = function(command, callback, errback) {
   'use strict';
+
   this.commandId_ += 1;
   command.id = this.commandId_;
   if (callback || errback) {

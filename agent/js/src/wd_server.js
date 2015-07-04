@@ -82,6 +82,7 @@ function WebDriverServer() {
     return WebDriverServer.instance_;
   }
   WebDriverServer.instance_ = this;
+
   return this;
 }
 
@@ -614,6 +615,7 @@ WebDriverServer.prototype.devToolsCommand_ = function(command) {
   // is undefined and scheduled, so we can't do:
   //   return process_utils.scheduleFunction(this.app_, command.method,
   //       this.devTools_.sendCommand, command);
+
   var sender = (function(callback) {
     return this.devTools_.sendCommand(command, callback);
   }.bind(this));
@@ -729,10 +731,7 @@ WebDriverServer.prototype.startVideoDevTools_ = function() {
           // This allows us to sync the DevTools trace vs. the video by matching
           // the first DevTools paint event timestamp to the video frame where
           // the background changed from non-white to white.
-          this.isRecordingDevTools_ = true;
-        this.app_.schedule('Start recording tracing', function() {
-          this.scheduleStartTracingIfRequested_();
-        }.bind(this));
+          this.startDevTools_();
           this.app_.timeout(500, 'Hold orange background');
         this.app_.schedule('Setting background to white', function() {logger.debug('Setting background to white');});
           this.setPageBackground_(frameId);  // White
@@ -740,14 +739,40 @@ WebDriverServer.prototype.startVideoDevTools_ = function() {
       }.bind(this));
     }
 
-    // Make sure we start recording DevTools regardless of the video.
-    this.isRecordingDevTools_ = true;
     logger.debug('Set isRecordingDevTools_');
   }.bind(this));
-  this.app_.schedule('Start recording tracing', function() {
-    this.scheduleStartTracingIfRequested_();
-  }.bind(this));
+
 };
+
+/**
+ * Start DevTools - unless they are already started
+ *
+ * @private
+ */
+WebDriverServer.prototype.startDevTools_ = function() {
+  if (!this.isRecordingDevTools_) {
+		this.isRecordingDevTools_ = true;
+		
+    this.app_.schedule('Start recording tracing', function () {
+      this.scheduleStartTracingIfRequested_();
+    }.bind(this));
+  }
+}
+
+/**
+ * Stop DevTools if they are already started
+ *
+ * @private
+ */
+WebDriverServer.prototype.stopDevTools_ = function() {
+  if (this.isRecordingDevTools_) {
+		this.isRecordingDevTools_ = false;
+		
+    this.scheduleNoFault_('stopDevTools_', function () {
+      this.scheduleStopTracing_();
+    }.bind(this));
+	}
+}
 
 /**
  * Blanks out the browser at the beginning of a test via WebDriver API.
@@ -782,6 +807,7 @@ WebDriverServer.prototype.clearPageAndStartVideoWd_ = function() {
  */
 WebDriverServer.prototype.scheduleClearBrowserCacheAndCookies_ = function() {
   'use strict';
+  logger.debug('Cleared browser cache');
   this.getCapabilities_().then(function(caps) {
     if (!this.isCacheCleared_ && !this.isCacheWarm_) {
       if (caps['wkrdp.Network.clearBrowserCache']) {
@@ -796,6 +822,7 @@ WebDriverServer.prototype.scheduleClearBrowserCacheAndCookies_ = function() {
     }
   }.bind(this));
 };
+
 
 /**
  * Starts browser tracing if it was requested, sets the tracing file.
@@ -929,48 +956,70 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
   this.networkCommand_('enable');
   this.pageCommand_('enable');
 
-  this.scheduleLoadPrimingPages();
-
   this.blankBrowserPage();
 
   this.startVideoDevTools_();
+	
   this.scheduleStartPacketCaptureIfRequested_();
-  // No page load timeout here -- agent_main enforces run-level timeout.
-  this.app_.schedule('Run page load', function() {
-    // onDevToolsMessage_ resolves this promise when it detects on-load.
-    this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
-    if (this.timeout_) {
-      var coalesceMillis = (undefined === this.task_.waitAfterOnload ?
-          exports.WAIT_AFTER_ONLOAD_MS :
-          (1000 * Math.floor(parseFloat(this.task_.waitAfterOnload, 10))));
-      logger.debug("Waiting up to " + this.timeout_ +
-                   "ms for the page to load");
-      this.timeoutTimer_ = global.setTimeout(
-          this.onPageLoad_.bind(this, new Error('Page load timeout')),
-          this.timeout_ - coalesceMillis);
-    } else {
-      logger.debug("No page load timeout set (unexpected)");
-    }
-    this.onTestStarted_();
-    this.pageCommand_('navigate', {url: this.task_.url});
-    return this.pageLoadDonePromise_.promise;
-  }.bind(this));
-  this.waitForCoalesce_(this.app_);
+  this.scheduleLoadPrimingPages_();
+	
+	if (!this.isPrimingRun) {
+		// No page load timeout here -- agent_main enforces run-level timeout.
+		this.app_.schedule('Run page load', function () {
+			this.startDevTools_();
+			// onDevToolsMessage_ resolves this promise when it detects on-load.
+			this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
+			this.setWaitAfterOnLoad_();
+			this.onTestStarted_();
+			this.pageCommand_('navigate', {url: this.task_.url});
+			return this.pageLoadDonePromise_.promise;
+		}.bind(this));
+		
+		this.waitForCoalesce_(this.app_);
+	}
 };
+
+/**
+ * Set wait after onload
+ */
+
+WebDriverServer.prototype.setWaitAfterOnLoad_ = function() {
+  'use strict';
+  if (this.timeout_) {
+    var coalesceMillis = (undefined === this.task_.waitAfterOnload ?
+        exports.WAIT_AFTER_ONLOAD_MS :
+        (1000 * Math.floor(parseFloat(this.task_.waitAfterOnload, 10))));
+    logger.debug("Waiting up to " + this.timeout_ +
+        "ms for the page to load");
+    this.timeoutTimer_ = global.setTimeout(
+        this.onPageLoad_.bind(this, new Error('Page load timeout')),
+        this.timeout_ - coalesceMillis);
+  } else {
+    logger.debug("No page load timeout set (unexpected)");
+  }
+}
 
 /**
  * Loop through and load all the cache priming pages before
  * the page to test is run. For flow testing.
  */
-WebDriverServer.prototype.scheduleLoadPrimingPages = function() {
+WebDriverServer.prototype.scheduleLoadPrimingPages_ = function() {
   'use strict';
   this.app_.schedule('Priming Pages', function() {
-    if (this.task_.navigateUrls && this.task_.navigateUrls.length > 0) {
+    if (this.task_.navigateUrls && this.task_.navigateUrls.length > 0 && (this.task_.navigateUrls.length == (this.task_.logDataCommands.length - 1))) {
       logger.debug('Starting priming pages');
       var primingPages = this.task_.navigateUrls;
+			var logDataCommands = this.task_.logDataCommands;
+			
+      if (primingPages.length > 0) {
+        this.isPrimingRun = true;
+      }
+
       for (var i = 0; i < primingPages.length; i++) {
         var primingPage = primingPages[i];
-        this.runPrimingPage(primingPage);
+				var logDataCommand = logDataCommands[i];
+
+        this.runPrimingPage(primingPage, logDataCommand);
       }
     }
   }.bind(this));
@@ -980,17 +1029,29 @@ WebDriverServer.prototype.scheduleLoadPrimingPages = function() {
  * Load a single cache priming page. For flow testing.
  * @param {String} primingPage
  */
-WebDriverServer.prototype.runPrimingPage = function(primingPage) {
+WebDriverServer.prototype.runPrimingPage = function(primingPage, logDataCommand) {
   'use strict';
   this.app_.schedule('Priming Url: ' + primingPage, function() {
-    this.isPrimingRun = true;
     logger.debug('Priming Url: ' + primingPage);
+		logger.debug('logData Command: ' + logDataCommand);
+		
+		if (logDataCommand == 1) {
+				logger.debug('Attempting to start Tracing');
+				this.startDevTools_();
+		} else {
+			logger.debug('Attempting to stop Tracing');
+			this.stopDevTools_();
+		}
+				
     this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
+
+    //this.setWaitAfterOnLoad_();
+    //this.onTestStarted_();
     this.pageCommand_('navigate', {url: primingPage});
     return this.pageLoadDonePromise_.promise;
   }.bind(this));
-  this.waitForCoalesce_(webdriver, exports.WAIT_AFTER_ONLOAD_MS);
-  this.isPrimingRun = false;
+  //this.waitForCoalesce_(this.app_);
+  this.waitForCoalesce_(webdriver,exports.WAIT_AFTER_ONLOAD_MS);
 };
 /**
  * Runs the user script in a sandboxed environment.
@@ -1200,6 +1261,59 @@ WebDriverServer.prototype.scheduleGetWdDevToolsLog_ = function() {
   }.bind(this));
 };
 
+/**
+ * @private
+ */
+WebDriverServer.prototype.send_ = function() {
+  this.scheduleNoFault_('Send', function() {
+    if (this.testError_) {
+      logger.error('Test failed: ' + this.testError_);
+    } else {
+      logger.info('Test passed');
+    }
+    this.scheduleStopTracing_();
+    if (this.driver_) {
+      this.scheduleNoFault_('Get WD Log',
+          this.scheduleGetWdDevToolsLog_.bind(this));
+    }
+    this.takeScreenshot_('screen', 'end of run').then(
+        function(diskPath) {
+          this.scheduleNoFault_('Check screenshot', function() {
+            process_utils.scheduleExec(this.app_,
+                'identify', ['-verbose', diskPath]).then(function(stdout) {
+                  if ((/[\r\n]\s*Colors:\s+1\s*[\r\n]/).test(stdout)) {
+                    throw new Error('Screen is blank');
+                  }
+                }, function(err) {
+                  logger.info('Ignoring identify error: ' + err.message);
+                });
+          }.bind(this));
+        }.bind(this), function(err) {
+          logger.info('Ignoring screenshot error: ' + err.message);
+        });
+    if (this.videoFile_) {
+      this.scheduleNoFault_('Stop video recording',
+          this.browser_.scheduleStopVideoRecording.bind(this.browser_));
+    }
+    if (this.pcapFile_) {
+      this.scheduleNoFault_('Stop packet capture',
+          this.browser_.scheduleStopPacketCapture.bind(this.browser_));
+    }
+    logger.debug("wd_server send");
+    this.scheduleNoFault_('Send IPC', function() {
+      exports.process.send({
+        cmd: (this.testError_ ? 'error' : 'send'),
+        testError: this.testError_,
+        agentError: this.agentError_,
+        devToolsMessages: this.devToolsMessages_,
+        screenshots: this.screenshots_,
+        traceData: this.traceData_,
+        videoFile: this.videoFile_,
+        pcapFile: this.pcapFile_
+      });
+    }.bind(this));
+  }.bind(this));
+};
 /**
  * @private
  */

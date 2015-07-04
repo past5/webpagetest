@@ -184,6 +184,15 @@ Job.prototype.processScriptCommand = function(command, value, extra) {
     if (command == 'navigate') {
       if (value !== undefined && value.trim().length)
         this.task.url = value.trim();
+    } else if (command == 'logdata') {
+      if (value !== undefined) {
+        var log = value.trim();
+        if (typeof log != "number") {
+          logger.debug("Invalid logData command parameters");
+				}
+      } else {
+        logger.debug("logData command is missing");
+      }
     } else if (command == 'setdns') {
       if (value !== undefined && extra !== undefined) {
         var host = value.trim();
@@ -752,6 +761,7 @@ function createZip(zipFileMap, fileNamer) {
     var fileName = fileNamer(name);
     logger.debug('Adding %s (%d bytes) to results zip',
         fileName, content.length);
+    
     zip.file(fileName, content);
   });
   // Convert back and forth between base64, otherwise corrupts on long content.
