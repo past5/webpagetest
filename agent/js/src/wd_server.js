@@ -706,13 +706,13 @@ WebDriverServer.prototype.blankBrowserPage = function() {
 };
 
 /**
- * Start recording video and enables the isRecordingDevTools_ flag
+ * Start recording video
  *
  * @private
  */
 WebDriverServer.prototype.startVideoDevTools_ = function() {
   'use strict';
-  this.app_.schedule('Priming Pages', function() {
+  this.app_.schedule('Start Video Recoding', function() {
     if (1 === this.task_['Capture Video']) {  // Emit video sync, start recording
       this.getCapabilities_().then(function (caps) {
         if (!caps.videoRecording) {
@@ -751,11 +751,8 @@ WebDriverServer.prototype.startVideoDevTools_ = function() {
  */
 WebDriverServer.prototype.startDevTools_ = function() {
   if (!this.isRecordingDevTools_) {
+    this.scheduleStartTracingIfRequested_();
 		this.isRecordingDevTools_ = true;
-		
-    this.app_.schedule('Start recording tracing', function () {
-      this.scheduleStartTracingIfRequested_();
-    }.bind(this));
   }
 }
 
@@ -766,11 +763,8 @@ WebDriverServer.prototype.startDevTools_ = function() {
  */
 WebDriverServer.prototype.stopDevTools_ = function() {
   if (this.isRecordingDevTools_) {
+    this.scheduleStopTracing_();
 		this.isRecordingDevTools_ = false;
-		
-    this.scheduleNoFault_('stopDevTools_', function () {
-      this.scheduleStopTracing_();
-    }.bind(this));
 	}
 }
 
@@ -955,28 +949,26 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
 
   this.networkCommand_('enable');
   this.pageCommand_('enable');
-
-  this.blankBrowserPage();
-
+	
+	this.scheduleLoadPrimingPages_();
+	
+	this.blankBrowserPage();
+	
   this.startVideoDevTools_();
-	
   this.scheduleStartPacketCaptureIfRequested_();
-  this.scheduleLoadPrimingPages_();
 	
-	if (!this.isPrimingRun) {
-		// No page load timeout here -- agent_main enforces run-level timeout.
-		this.app_.schedule('Run page load', function () {
-			this.startDevTools_();
-			// onDevToolsMessage_ resolves this promise when it detects on-load.
-			this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
-			this.setWaitAfterOnLoad_();
-			this.onTestStarted_();
-			this.pageCommand_('navigate', {url: this.task_.url});
-			return this.pageLoadDonePromise_.promise;
-		}.bind(this));
+	// No page load timeout here -- agent_main enforces run-level timeout.
+	this.app_.schedule('Run page load', function () {
+		this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
 		
-		this.waitForCoalesce_(this.app_);
-	}
+		this.startDevTools_();
+		this.setWaitAfterOnLoad_();
+		this.onTestStarted_();
+		this.pageCommand_('navigate', {url: this.task_.url});
+		return this.pageLoadDonePromise_.promise;
+	}.bind(this));
+		
+	this.waitForCoalesce_(this.app_);
 };
 
 /**
@@ -1018,7 +1010,9 @@ WebDriverServer.prototype.scheduleLoadPrimingPages_ = function() {
       for (var i = 0; i < primingPages.length; i++) {
         var primingPage = primingPages[i];
 				var logDataCommand = logDataCommands[i];
-
+			
+				this.blankBrowserPage();
+				
         this.runPrimingPage(primingPage, logDataCommand);
       }
     }
@@ -1027,32 +1021,35 @@ WebDriverServer.prototype.scheduleLoadPrimingPages_ = function() {
 
 /**
  * Load a single cache priming page. For flow testing.
- * @param {String} primingPage
+ * @param {String} primingPage, {Integer} logDataCommand
  */
 WebDriverServer.prototype.runPrimingPage = function(primingPage, logDataCommand) {
   'use strict';
   this.app_.schedule('Priming Url: ' + primingPage, function() {
     logger.debug('Priming Url: ' + primingPage);
-		logger.debug('logData Command: ' + logDataCommand);
+		
+		this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
 		
 		if (logDataCommand == 1) {
-				logger.debug('Attempting to start Tracing');
-				this.startDevTools_();
+			logger.debug('Attempting to start Tracing');
+			this.startDevTools_();
 		} else {
 			logger.debug('Attempting to stop Tracing');
 			this.stopDevTools_();
 		}
 				
-    this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
-
-    //this.setWaitAfterOnLoad_();
-    //this.onTestStarted_();
-    this.pageCommand_('navigate', {url: primingPage});
+		this.setWaitAfterOnLoad_();
+    this.onTestStarted_();
+		
+		this.pageCommand_('navigate', {url: primingPage});
+		
     return this.pageLoadDonePromise_.promise;
   }.bind(this));
-  //this.waitForCoalesce_(this.app_);
-  this.waitForCoalesce_(webdriver,exports.WAIT_AFTER_ONLOAD_MS);
+	
+  this.waitForCoalesce_(this.app_);
+  //this.waitForCoalesce_(webdriver,exports.WAIT_AFTER_ONLOAD_MS);
 };
+
 /**
  * Runs the user script in a sandboxed environment.
  *

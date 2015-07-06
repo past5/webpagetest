@@ -187,7 +187,7 @@ Job.prototype.processScriptCommand = function(command, value, extra) {
     } else if (command == 'logdata') {
       if (value !== undefined) {
         var log = value.trim();
-        if (typeof log != "number") {
+        if (parseInt(log) == "NaN") {
           logger.debug("Invalid logData command parameters");
 				}
       } else {
