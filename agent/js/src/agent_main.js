@@ -417,7 +417,9 @@ Agent.prototype.startJobRun_ = function(job) {
     var url = job.task.url;
     var setDnsOverrides;
     var navigateUrls;
-		var logDataCommands;
+    var logDataCommands;
+    var httpHeaders;
+
     var pac;
     if (script && !/new\s+(\S+\.)?Builder\s*\(/.test(script)) {
       var decodedScript = this.decodeScript_(script);
@@ -426,7 +428,8 @@ Agent.prototype.startJobRun_ = function(job) {
       script = undefined;
       setDnsOverrides = decodedScript.setDnsOverrides;
       navigateUrls = decodedScript.navigateUrls;
-			logDataCommands = decodedScript.logDataCommands;
+      logDataCommands = decodedScript.logDataCommands;
+      httpHeaders = decodedScript.httpHeaders;
     }
     url = url.trim();
     if (!((/^https?:\/\//i).test(url))) {
@@ -468,13 +471,19 @@ Agent.prototype.startJobRun_ = function(job) {
     } else {
       delete task.navigateUrls;
     }
-		
-		if (!!logDataCommands) {
+
+    if (!!logDataCommands) {
       task.logDataCommands = logDataCommands;
     } else {
       delete task.logDataCommands;
     }
-		
+
+    if (!!httpHeaders) {
+      task.httpHeaders = httpHeaders;
+    } else {
+      delete task.httpHeaders;
+    }
+
     var message = {
         cmd: 'run',
         runNumber: job.runNumber,
@@ -610,7 +619,9 @@ Agent.prototype.decodeScript_ = function(script) {
   var setDnsOverrides = [];
   var logDataCommands = [];
   var lastLog = 1;
-	
+  var httpHeaders = [];
+  var headerPos = 0;
+
   script.split('\n').forEach(function(line, lineNumber) {
 
     line = line.trim();
@@ -627,22 +638,32 @@ Agent.prototype.decodeScript_ = function(script) {
       return;
     }
 		
-		//we only look for logData command on a line before navigate
-		m = line.match(/^logData\s+(\S+)$/i);
-		if(m) {
-			lastLog = m[1];
-			logger.debug('logData match found: ' + lastLog);
-			return;
-		} 
-				
+    //we only look for logData command on a line before navigate
+    m = line.match(/^logData\s+(\S+)$/i);
+    if(m) {
+      lastLog = m[1];
+      logger.debug('logData match found: ' + lastLog);
+      return;
+    }
+
+    //we only look for setHeader command on lines before navigate
+    m = line.match(/^setHeader\s+(\S+)\s+(\S+)$/i);
+    if(m) {
+      httpHeaders.push([headerPos,m[1],m[2]]);
+      logger.debug('setHeader match found.  key: ' + m[1] + ' value: ' + m[2]);
+      return;
+    }
+
     // find navigate commands
     m = line.match(/^navigate\s+(\S+)$/i);
     if (m) {
       navigateUrls.push(m[1]);
 			
-			//always push last log value
-			logDataCommands.push(lastLog);
-			
+      //always push last log value
+      logDataCommands.push(lastLog);
+
+      //advance first dimension of httpHeaders array
+      headerPos++;
       return;
     }
 
@@ -679,7 +700,7 @@ Agent.prototype.decodeScript_ = function(script) {
     // final navigate is our test url
     url = navigateUrls[navigateUrls.length - 1];
     // remove final navigate from priming runs
-    navigateUrls = navigateUrls.slice(0, navigateUrls.length - 1);
+    // navigateUrls = navigateUrls.slice(0, navigateUrls.length - 1);
   }
 
   if (!url) {
@@ -692,7 +713,8 @@ Agent.prototype.decodeScript_ = function(script) {
     pac: pac,
     setDnsOverrides: setDnsOverrides,
     navigateUrls: navigateUrls,
-		logDataCommands: logDataCommands
+    logDataCommands: logDataCommands,
+    httpHeaders: httpHeaders
   };
 };
 

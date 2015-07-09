@@ -949,26 +949,30 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
 
   this.networkCommand_('enable');
   this.pageCommand_('enable');
-	
-	this.scheduleLoadPrimingPages_();
-	
-	this.blankBrowserPage();
-	
-  this.startVideoDevTools_();
-  this.scheduleStartPacketCaptureIfRequested_();
-	
-	// No page load timeout here -- agent_main enforces run-level timeout.
-	this.app_.schedule('Run page load', function () {
-		this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
-		
-		this.startDevTools_();
-		this.setWaitAfterOnLoad_();
-		this.onTestStarted_();
-		this.pageCommand_('navigate', {url: this.task_.url});
-		return this.pageLoadDonePromise_.promise;
-	}.bind(this));
-		
-	this.waitForCoalesce_(this.app_);
+
+  this.scheduleLoadPrimingPages_();
+
+  logger.debug("this.isPrimingRun: " + this.isPrimingRun);
+
+  if (!this.isPrimingRun) {
+    this.blankBrowserPage();
+
+    this.startVideoDevTools_();
+    this.scheduleStartPacketCaptureIfRequested_();
+
+    // No page load timeout here -- agent_main enforces run-level timeout.
+    this.app_.schedule('Run page load', function () {
+      this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
+
+      this.startDevTools_();
+      this.setWaitAfterOnLoad_();
+      this.onTestStarted_();
+      this.pageCommand_('navigate', {url: this.task_.url});
+      return this.pageLoadDonePromise_.promise;
+    }.bind(this));
+
+    this.waitForCoalesce_(this.app_);
+  }
 };
 
 /**
@@ -997,23 +1001,24 @@ WebDriverServer.prototype.setWaitAfterOnLoad_ = function() {
  */
 WebDriverServer.prototype.scheduleLoadPrimingPages_ = function() {
   'use strict';
+  var primingPages = this.task_.navigateUrls;
+  var logDataCommands = this.task_.logDataCommands;
+
+  if (primingPages.length > 0) {
+    this.isPrimingRun = true;
+  }
+
   this.app_.schedule('Priming Pages', function() {
-    if (this.task_.navigateUrls && this.task_.navigateUrls.length > 0 && (this.task_.navigateUrls.length == (this.task_.logDataCommands.length - 1))) {
+    if (this.task_.navigateUrls && this.task_.navigateUrls.length > 0 && (this.task_.navigateUrls.length == this.task_.logDataCommands.length)) {
       logger.debug('Starting priming pages');
-      var primingPages = this.task_.navigateUrls;
-			var logDataCommands = this.task_.logDataCommands;
-			
-      if (primingPages.length > 0) {
-        this.isPrimingRun = true;
-      }
 
       for (var i = 0; i < primingPages.length; i++) {
         var primingPage = primingPages[i];
-				var logDataCommand = logDataCommands[i];
+        var logDataCommand = logDataCommands[i];
 			
-				this.blankBrowserPage();
+        this.blankBrowserPage();
 				
-        this.runPrimingPage(primingPage, logDataCommand);
+        this.runPrimingPage(primingPage, logDataCommand, i);
       }
     }
   }.bind(this));
@@ -1023,31 +1028,53 @@ WebDriverServer.prototype.scheduleLoadPrimingPages_ = function() {
  * Load a single cache priming page. For flow testing.
  * @param {String} primingPage, {Integer} logDataCommand
  */
-WebDriverServer.prototype.runPrimingPage = function(primingPage, logDataCommand) {
+WebDriverServer.prototype.runPrimingPage = function(primingPage, logDataCommand, position) {
   'use strict';
   this.app_.schedule('Priming Url: ' + primingPage, function() {
     logger.debug('Priming Url: ' + primingPage);
+    var httpHeaders = this.task_.httpHeaders;
+
+    this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
 		
-		this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
-		
-		if (logDataCommand == 1) {
-			logger.debug('Attempting to start Tracing');
-			this.startDevTools_();
-		} else {
-			logger.debug('Attempting to stop Tracing');
-			this.stopDevTools_();
-		}
-				
-		this.setWaitAfterOnLoad_();
+    if (logDataCommand == 1) {
+      logger.debug('Attempting to start Tracing');
+      this.startDevTools_();
+    } else {
+      logger.debug('Attempting to stop Tracing');
+      this.stopDevTools_();
+    }
+
+    var objHeaders = {};
+
+    for (var i=0; i < httpHeaders.length; i++) {
+      if (httpHeaders[i][0] == position) {
+        objHeaders[httpHeaders[i][1]] = httpHeaders[i][2];
+      }
+    }
+
+    this.scheduleSetExtraHeaders_(objHeaders);
+    this.setWaitAfterOnLoad_();
     this.onTestStarted_();
 		
-		this.pageCommand_('navigate', {url: primingPage});
+    this.pageCommand_('navigate', {url: primingPage});
 		
     return this.pageLoadDonePromise_.promise;
   }.bind(this));
 	
   this.waitForCoalesce_(this.app_);
   //this.waitForCoalesce_(webdriver,exports.WAIT_AFTER_ONLOAD_MS);
+};
+
+/**
+ * Send our custom headers for each page
+ */
+WebDriverServer.prototype.scheduleSetExtraHeaders_ = function(objHeaders) {
+  'use strict';
+  this.app_.schedule('Set extra headers', function() {
+    logger.debug('Starting to set extra page headers');
+    //this.networkCommand_('setExtraHTTPHeaders', { headers: { "x-sev": "test", "x-sev1": "test1" } });
+    this.networkCommand_('setExtraHTTPHeaders', { headers: objHeaders });
+  }.bind(this));
 };
 
 /**
