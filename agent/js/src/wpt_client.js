@@ -197,10 +197,8 @@ Job.prototype.processScriptCommand = function(command, value, extra) {
       if (value !== undefined) {
         var header = value.trim();
       } else {
-        logger.debug("Invalid setHeaders command parameters");
+        logger.debug("Invalid setHeader command parameters");
       }
-    } else if (command == 'resetheaders') {
-      //do nothing for now
     } else if (command == 'setdns') {
       if (value !== undefined && extra !== undefined) {
         var host = value.trim();
@@ -250,7 +248,7 @@ Job.prototype.processScriptCommand = function(command, value, extra) {
       } else {
         logger.debug("Invalid setTimeout command parameters");
       }
-    } else {
+    } else if (command != 'resetheaders') {
       logger.error("Unexpected script command: " + command);
     }
   } catch(err) {

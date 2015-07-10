@@ -722,7 +722,7 @@ WebDriverServer.prototype.startVideoDevTools_ = function() {
         this.pageCommand_('getResourceTree').then(function (result) {
           var frameId = result.frameTree.frame.id;
           // Hold orange(500ms)->white: anchor video to DevTools.
-        this.app_.schedule('Setting background to orange', function() {logger.debug('Setting background to orange');});
+          this.app_.schedule('Setting background to orange', function() {logger.debug('Setting background to orange');});
           this.setPageBackground_(frameId, GHASTLY_ORANGE_);
           this.app_.timeout(500, 'Set orange background');
           this.scheduleStartVideoRecording_();
@@ -731,9 +731,9 @@ WebDriverServer.prototype.startVideoDevTools_ = function() {
           // This allows us to sync the DevTools trace vs. the video by matching
           // the first DevTools paint event timestamp to the video frame where
           // the background changed from non-white to white.
-          this.startDevTools_();
+          this.scheduleStartDevTools_();
           this.app_.timeout(500, 'Hold orange background');
-        this.app_.schedule('Setting background to white', function() {logger.debug('Setting background to white');});
+          this.app_.schedule('Setting background to white', function() {logger.debug('Setting background to white');});
           this.setPageBackground_(frameId);  // White
         }.bind(this));
       }.bind(this));
@@ -749,23 +749,29 @@ WebDriverServer.prototype.startVideoDevTools_ = function() {
  *
  * @private
  */
-WebDriverServer.prototype.startDevTools_ = function() {
-  if (!this.isRecordingDevTools_) {
-    this.scheduleStartTracingIfRequested_();
-		this.isRecordingDevTools_ = true;
-  }
+WebDriverServer.prototype.scheduleStartDevTools_ = function() {
+  'use strict';
+  this.app_.schedule('Start Dev Tools', function() {
+    if (!this.isRecordingDevTools_) {
+      this.scheduleStartTracingIfRequested_();
+      this.isRecordingDevTools_ = true;
+    }
+  }.bind(this));
 }
 
 /**
- * Stop DevTools if they are already started
+ * Stop DevTools if they are already stopped
  *
  * @private
  */
-WebDriverServer.prototype.stopDevTools_ = function() {
-  if (this.isRecordingDevTools_) {
-    this.scheduleStopTracing_();
-		this.isRecordingDevTools_ = false;
-	}
+WebDriverServer.prototype.scheduleStopDevTools_ = function() {
+  'use strict';
+  this.app_.schedule('Stop Dev Tools', function() {
+    if (this.isRecordingDevTools_) {
+      this.scheduleStopTracing_();
+      this.isRecordingDevTools_ = false;
+    }
+  }.bind(this));
 }
 
 /**
@@ -954,29 +960,22 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
 
   logger.debug("this.isPrimingRun: " + this.isPrimingRun);
 
+  //if navigate commands are present in the script, then evaluate the last page in
+  // scheduleLoadPrimingPages_ loop, and do not execute the logic below
   if (!this.isPrimingRun) {
     this.blankBrowserPage();
 
     this.startVideoDevTools_();
     this.scheduleStartPacketCaptureIfRequested_();
+    this.scheduleStartDevTools_();
 
-    // No page load timeout here -- agent_main enforces run-level timeout.
-    this.app_.schedule('Run page load', function () {
-      this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
-
-      this.startDevTools_();
-      this.setWaitAfterOnLoad_();
-      this.onTestStarted_();
-      this.pageCommand_('navigate', {url: this.task_.url});
-      return this.pageLoadDonePromise_.promise;
-    }.bind(this));
-
-    this.waitForCoalesce_(this.app_);
+    this.scheduleNavigate_(this.task_.url);
   }
 };
 
 /**
- * Set wait after onload
+ * Set timeout wait after page onload to allow for script execution
+ *  @private
  */
 
 WebDriverServer.prototype.setWaitAfterOnLoad_ = function() {
@@ -996,98 +995,118 @@ WebDriverServer.prototype.setWaitAfterOnLoad_ = function() {
 }
 
 /**
- * Loop through and load all the cache priming pages before
- * the page to test is run. For flow testing.
+ * Loop through and load all the cache priming pages including
+ * the page to test. For flow testing.
+ *  @private
  */
 WebDriverServer.prototype.scheduleLoadPrimingPages_ = function() {
   'use strict';
   var primingPages = this.task_.navigateUrls;
   var logDataCommands = this.task_.logDataCommands;
 
-  if (primingPages.length > 0) {
+  if (( typeof primingPages === 'object') && (primingPages.length > 0) ) {
     this.isPrimingRun = true;
   }
 
-  this.app_.schedule('Priming Pages', function() {
-    if (this.task_.navigateUrls && this.task_.navigateUrls.length > 0 && (this.task_.navigateUrls.length == this.task_.logDataCommands.length)) {
-      logger.debug('Starting priming pages');
+  if (this.task_.navigateUrls && this.task_.navigateUrls.length > 0 && (this.task_.navigateUrls.length == this.task_.logDataCommands.length)) {
+    logger.debug('Starting priming pages');
 
-      for (var i = 0; i < primingPages.length; i++) {
-        var primingPage = primingPages[i];
-        var logDataCommand = logDataCommands[i];
-			
-        this.blankBrowserPage();
+    for (var i = 0; i < primingPages.length; i++) {
+      var primingPage = primingPages[i];
+      var logDataCommand = logDataCommands[i];
 				
-        this.runPrimingPage(primingPage, logDataCommand, i);
-      }
+      this.runPrimingPage(primingPage, logDataCommand, i);
     }
-  }.bind(this));
+  }
 };
 
 /**
- * Load a single cache priming page. For flow testing.
- * @param {String} primingPage, {Integer} logDataCommand
+ * Load a single cache priming page, and executes logData, setHeader, and resetHeaders commands
+ * prior to loading. For flow testing.
+ * @param {String} primingPage - navigate url
+ * @param {Integer} logDataCommand - turn Tracing On/Off - 1 or 0
+ * @param {Integer} position - position of the navigate command in the array
+ *  @private
  */
 WebDriverServer.prototype.runPrimingPage = function(primingPage, logDataCommand, position) {
   'use strict';
-  this.app_.schedule('Priming Url: ' + primingPage, function() {
-    logger.debug('Priming Url: ' + primingPage);
-    var httpHeaders = this.task_.httpHeaders;
-    var resetHeaders = this.task_.resetHeaders;
-    var resetFlag = false;
+  var httpHeaders = this.task_.httpHeaders;
+  var resetHeaders = this.task_.resetHeaders;
+  var resetFlag = false;
 
-    this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
-		
-    if (logDataCommand == 1) {
-      logger.debug('Attempting to start Tracing');
-      this.startDevTools_();
-    } else {
-      logger.debug('Attempting to stop Tracing');
-      this.stopDevTools_();
+  this.blankBrowserPage();
+
+  //not capturing video yet, as it starts Tracing, ignoring logDataCommand
+  //this.startVideoDevTools_();
+  this.scheduleStartPacketCaptureIfRequested_();
+
+  if (logDataCommand == 1) {
+    this.scheduleStartDevTools_();
+  } else {
+    this.scheduleStopDevTools_();
+  }
+
+  var objHeaders = {};
+
+  //look for resetHeaders command corresponding to this navigate
+  for (var i=0; i < resetHeaders.length; i++) {
+    if (resetHeaders[i] == position) {
+      resetFlag = true;
+      break;
     }
+  }
 
-    var objHeaders = {};
+  //send blank objHeaders to reset any extra headers
+  if (resetFlag) {
+    this.scheduleSetExtraHeaders_(objHeaders);
+  }
 
-    for (var i=0; i < resetHeaders.length; i++) {
-      if (resetHeaders[i] == position) {
-        resetFlag = true;
-      }
+  //look for setHeaders commands and set in objHeaders if found
+  for (var i=0; i < httpHeaders.length; i++) {
+    if (httpHeaders[i][0] == position) {
+      objHeaders[httpHeaders[i][1]] = httpHeaders[i][2];
     }
+  }
 
-    if (resetFlag) {
-      this.scheduleSetExtraHeaders_(objHeaders);
-    }
+  //only send command if the objHeaders has something, otherwise will reset previous headers
+  if (!(Object.keys(objHeaders).length === 0)) {
+    this.scheduleSetExtraHeaders_(objHeaders);
+  }
 
-    for (var i=0; i < httpHeaders.length; i++) {
-      if (httpHeaders[i][0] == position) {
-        objHeaders[httpHeaders[i][1]] = httpHeaders[i][2];
-      }
-    }
-
-    if (!(Object.keys(objHeaders).length === 0)) {
-      this.scheduleSetExtraHeaders_(objHeaders);
-    }
-
-    this.setWaitAfterOnLoad_();
-    this.onTestStarted_();
-		
-    this.pageCommand_('navigate', {url: primingPage});
-		
-    return this.pageLoadDonePromise_.promise;
-  }.bind(this));
-	
-  this.waitForCoalesce_(this.app_);
-  //this.waitForCoalesce_(webdriver,exports.WAIT_AFTER_ONLOAD_MS);
+  this.scheduleNavigate_(primingPage);
 };
 
 /**
- * Send our custom headers for each page
+ * Send command to navigate to a page
+ * @param {String} url - page address
+ *  @private
+ */
+WebDriverServer.prototype.scheduleNavigate_ = function(url) {
+  this.app_.schedule('Run page load ' + url, function() {
+    logger.debug(' Url: ' + url);
+
+    this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
+
+    this.setWaitAfterOnLoad_();
+    this.onTestStarted_();
+
+    this.pageCommand_('navigate', {url: url});
+
+    return this.pageLoadDonePromise_.promise;
+  }.bind(this));
+
+  this.waitForCoalesce_(this.app_);
+}
+
+/**
+ * Send custom headers for each page
+ * @param {String} objHeaders - key / string pairs of headers / values
+ *  @private
  */
 WebDriverServer.prototype.scheduleSetExtraHeaders_ = function(objHeaders) {
   'use strict';
   this.app_.schedule('Set extra headers', function() {
-    logger.debug('Starting to set extra page headers');
-    //this.networkCommand_('setExtraHTTPHeaders', { headers: { "x-sev": "test", "x-sev1": "test1" } });
+    logger.debug('Start to set extra page headers');
     this.networkCommand_('setExtraHTTPHeaders', { headers: objHeaders });
   }.bind(this));
 };

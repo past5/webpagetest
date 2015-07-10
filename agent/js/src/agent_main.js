@@ -646,7 +646,7 @@ Agent.prototype.decodeScript_ = function(script) {
       return;
     }
 		
-    //we only look for logData command on a line before navigate
+    //find logData command on lines before next navigate
     m = line.match(/^logData\s+(\S+)$/i);
     if(m) {
       lastLog = m[1];
@@ -654,15 +654,15 @@ Agent.prototype.decodeScript_ = function(script) {
       return;
     }
 
-    //we only look for setHeader command on lines before navigate
+    //find resetHeaders command on lines before next navigate
     m = line.match(/^resetHeaders/);
     if(m) {
       resetHeaders.push(headerPos);
-      logger.debug('resetHeader match found.');
+      logger.debug('resetHeaders match found.');
       return;
     }
 
-    //we only look for setHeader command on lines before navigate
+    //find setHeader command on lines before next navigate
     m = line.match(/^setHeader\s+(\S+)\s+(\S+)$/i);
     if(m) {
       httpHeaders.push([headerPos,m[1],m[2]]);
@@ -678,7 +678,7 @@ Agent.prototype.decodeScript_ = function(script) {
       //always push last log value
       logDataCommands.push(lastLog);
 
-      //advance first value of httpHeaders array, which tracks
+      //advance first value of httpHeaders array, which tracks the position of corresponding navigate command
       headerPos++;
       return;
     }
