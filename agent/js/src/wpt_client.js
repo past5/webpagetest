@@ -248,7 +248,7 @@ Job.prototype.processScriptCommand = function(command, value, extra) {
       } else {
         logger.debug("Invalid setTimeout command parameters");
       }
-    } else if (command != 'resetheaders') {
+    } else if (command.trim() != 'resetheaders') {
       logger.error("Unexpected script command: " + command);
     }
   } catch(err) {

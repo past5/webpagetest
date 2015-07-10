@@ -1046,8 +1046,6 @@ WebDriverServer.prototype.runPrimingPage = function(primingPage, logDataCommand,
     this.scheduleStopDevTools_();
   }
 
-  var objHeaders = {};
-
   //look for resetHeaders command corresponding to this navigate
   for (var i=0; i < resetHeaders.length; i++) {
     if (resetHeaders[i] == position) {
@@ -1058,8 +1056,10 @@ WebDriverServer.prototype.runPrimingPage = function(primingPage, logDataCommand,
 
   //send blank objHeaders to reset any extra headers
   if (resetFlag) {
-    this.scheduleSetExtraHeaders_(objHeaders);
+    this.scheduleSetExtraHeaders_({});
   }
+
+  var objHeaders = {};
 
   //look for setHeaders commands and set in objHeaders if found
   for (var i=0; i < httpHeaders.length; i++) {
@@ -1100,7 +1100,7 @@ WebDriverServer.prototype.scheduleNavigate_ = function(url) {
 
 /**
  * Send custom headers for each page
- * @param {String} objHeaders - key / string pairs of headers / values
+ * @param {Object} objHeaders - key / string pairs of headers / values
  *  @private
  */
 WebDriverServer.prototype.scheduleSetExtraHeaders_ = function(objHeaders) {
