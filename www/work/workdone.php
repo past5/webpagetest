@@ -6,6 +6,7 @@ if(extension_loaded('newrelic')) {
   newrelic_add_custom_tracer('getBreakdown');
   newrelic_add_custom_tracer('GetVisualProgress');
   newrelic_add_custom_tracer('DevToolsGetConsoleLog');
+  newrelic_add_custom_tracer('WaitForSystemLoad');
 }
 
 chdir('..');
@@ -27,7 +28,7 @@ if (!isset($included)) {
   header("Cache-Control: no-cache, must-revalidate");
   header("Expires: Sat, 26 Jul 1997 05:00:00 GMT");
 }
-set_time_limit(60*5);
+set_time_limit(3600);
 ignore_user_abort(true);
 
 $key  = $_REQUEST['key'];
@@ -124,7 +125,7 @@ if (ValidateTestId($id)) {
         // update the location time
         if( strlen($location) ) {
             if( !is_dir('./tmp') )
-                mkdir('./tmp');
+                mkdir('./tmp', 0777, true);
             touch( "./tmp/$location.tm" );
         }
         
@@ -265,7 +266,7 @@ if (ValidateTestId($id)) {
           }
           if ($testInfo['video'])
             $workdone_video_start = microtime(true);
-          ProcessAVIVideo($testInfo, $testPath, $runNumber, $cacheWarmed);
+          ProcessAVIVideo($testInfo, $testPath, $runNumber, $cacheWarmed, $max_load);
           if ($testInfo['video'])
             $workdone_video_end = microtime(true);
         }
@@ -363,7 +364,7 @@ if (ValidateTestId($id)) {
           if (array_key_exists('industry', $ini) && array_key_exists('industry_page', $ini) && 
             strlen($ini['industry']) && strlen($ini['industry_page'])) {
             if( !is_dir('./video/dat') )
-              mkdir('./video/dat');
+              mkdir('./video/dat', 0777, true);
             $indLock = Lock("Industry Video");
             if (isset($indLock)) {
               // update the page in the industry list
