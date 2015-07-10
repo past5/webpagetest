@@ -419,6 +419,7 @@ Agent.prototype.startJobRun_ = function(job) {
     var navigateUrls;
     var logDataCommands;
     var httpHeaders;
+    var resetHeaders;
 
     var pac;
     if (script && !/new\s+(\S+\.)?Builder\s*\(/.test(script)) {
@@ -430,6 +431,7 @@ Agent.prototype.startJobRun_ = function(job) {
       navigateUrls = decodedScript.navigateUrls;
       logDataCommands = decodedScript.logDataCommands;
       httpHeaders = decodedScript.httpHeaders;
+      resetHeaders = decodedScript.resetHeaders;
     }
     url = url.trim();
     if (!((/^https?:\/\//i).test(url))) {
@@ -459,30 +461,35 @@ Agent.prototype.startJobRun_ = function(job) {
         task.url = url;
       }
 
+      if (!!setDnsOverrides) {
+        task.setDnsOverrides = setDnsOverrides;
+      } else {
+        delete task.setDnsOverrides;
+      }
 
-    if (!!setDnsOverrides) {
-      task.setDnsOverrides = setDnsOverrides;
-    } else {
-      delete task.setDnsOverrides;
-    }
+      if (!!navigateUrls) {
+        task.navigateUrls = navigateUrls;
+      } else {
+        delete task.navigateUrls;
+      }
 
-    if (!!navigateUrls) {
-      task.navigateUrls = navigateUrls;
-    } else {
-      delete task.navigateUrls;
-    }
+      if (!!logDataCommands) {
+        task.logDataCommands = logDataCommands;
+      } else {
+        delete task.logDataCommands;
+      }
 
-    if (!!logDataCommands) {
-      task.logDataCommands = logDataCommands;
-    } else {
-      delete task.logDataCommands;
-    }
+      if (!!httpHeaders) {
+        task.httpHeaders = httpHeaders;
+      } else {
+        delete task.httpHeaders;
+      }
 
-    if (!!httpHeaders) {
-      task.httpHeaders = httpHeaders;
-    } else {
-      delete task.httpHeaders;
-    }
+      if (!!resetHeaders) {
+        task.resetHeaders = resetHeaders;
+      } else {
+        delete task.resetHeaders;
+      }
 
     var message = {
         cmd: 'run',
@@ -620,6 +627,7 @@ Agent.prototype.decodeScript_ = function(script) {
   var logDataCommands = [];
   var lastLog = 1;
   var httpHeaders = [];
+  var resetHeaders = [];
   var headerPos = 0;
 
   script.split('\n').forEach(function(line, lineNumber) {
@@ -647,6 +655,14 @@ Agent.prototype.decodeScript_ = function(script) {
     }
 
     //we only look for setHeader command on lines before navigate
+    m = line.match(/^resetHeaders/);
+    if(m) {
+      resetHeaders.push(headerPos);
+      logger.debug('resetHeader match found.');
+      return;
+    }
+
+    //we only look for setHeader command on lines before navigate
     m = line.match(/^setHeader\s+(\S+)\s+(\S+)$/i);
     if(m) {
       httpHeaders.push([headerPos,m[1],m[2]]);
@@ -662,7 +678,7 @@ Agent.prototype.decodeScript_ = function(script) {
       //always push last log value
       logDataCommands.push(lastLog);
 
-      //advance first dimension of httpHeaders array
+      //advance first value of httpHeaders array, which tracks
       headerPos++;
       return;
     }
@@ -714,7 +730,8 @@ Agent.prototype.decodeScript_ = function(script) {
     setDnsOverrides: setDnsOverrides,
     navigateUrls: navigateUrls,
     logDataCommands: logDataCommands,
-    httpHeaders: httpHeaders
+    httpHeaders: httpHeaders,
+    resetHeaders: resetHeaders
   };
 };
 

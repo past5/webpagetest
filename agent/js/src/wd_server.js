@@ -1033,6 +1033,8 @@ WebDriverServer.prototype.runPrimingPage = function(primingPage, logDataCommand,
   this.app_.schedule('Priming Url: ' + primingPage, function() {
     logger.debug('Priming Url: ' + primingPage);
     var httpHeaders = this.task_.httpHeaders;
+    var resetHeaders = this.task_.resetHeaders;
+    var resetFlag = false;
 
     this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
 		
@@ -1046,13 +1048,26 @@ WebDriverServer.prototype.runPrimingPage = function(primingPage, logDataCommand,
 
     var objHeaders = {};
 
+    for (var i=0; i < resetHeaders.length; i++) {
+      if (resetHeaders[i] == position) {
+        resetFlag = true;
+      }
+    }
+
+    if (resetFlag) {
+      this.scheduleSetExtraHeaders_(objHeaders);
+    }
+
     for (var i=0; i < httpHeaders.length; i++) {
       if (httpHeaders[i][0] == position) {
         objHeaders[httpHeaders[i][1]] = httpHeaders[i][2];
       }
     }
 
-    this.scheduleSetExtraHeaders_(objHeaders);
+    if (!(Object.keys(objHeaders).length === 0)) {
+      this.scheduleSetExtraHeaders_(objHeaders);
+    }
+
     this.setWaitAfterOnLoad_();
     this.onTestStarted_();
 		

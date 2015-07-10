@@ -188,17 +188,19 @@ Job.prototype.processScriptCommand = function(command, value, extra) {
       if (value !== undefined) {
         var log = value.trim();
         if (parseInt(log) == "NaN") {
-          logger.debug("Invalid setDns command parameters");
+          logger.debug("Invalid logData command parameters");
         }
       } else {
-        logger.debug("Invalid setDns command parameters");
+        logger.debug("Invalid logData command parameters");
       }
     } else if (command == 'setheader') {
       if (value !== undefined) {
         var header = value.trim();
       } else {
-        logger.debug("Invalid setHeader command parameters");
+        logger.debug("Invalid setHeaders command parameters");
       }
+    } else if (command == 'resetheaders') {
+      //do nothing for now
     } else if (command == 'setdns') {
       if (value !== undefined && extra !== undefined) {
         var host = value.trim();
