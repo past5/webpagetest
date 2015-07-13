@@ -56,7 +56,7 @@ var CHROME_FLAGS = [
     '--disable-external-intent-requests',
     // Disable UI bars (location, debugging, etc)
     '--disable-infobars',
-    '--user-agent=\"Mozilla/5.0 (Linux; Android 4.4.2; SAMSUNG-SGH-I747 Build/KOT49H) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.90 Mobile Safari/537.36\"',
+    '--user-agent=\"Mozilla/5.0 (Linux; Android 4.4.2; SAMSUNG-SGH-I747 Build/KOT49H) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/39.0.2171.90 Mobile Safari/537.36 FVKey:Enabled\"',
     // Disable the save password dialog
     '--disable-save-password-bubble'
   ];
@@ -667,45 +667,6 @@ BrowserAndroidChrome.prototype.scheduleTakeScreenshot =
     }.bind(this));
   }.bind(this));
 };
-
-
-/**
- * Set DNS Overrides.
- *
- * @param {Array.<string,string>} overrides  Array of
- *     DNS overrides from script.
- */
-BrowserAndroidChrome.prototype.scheduleSetDnsOverrides = function(overrides) {
-  'use strict';
-  // we need to write to /system which is read only
-  logger.debug('Remounting /system as read/write');
-  this.adb_.su(['mount', '-o', 'remount,rw', '/system']);
-
-  logger.debug('Adding DNS overrides');
-  // overwriting hosts file so always add the localhost entry first
-  this.adb_.su(['echo', '127.0.0.1 localhost > /system/etc/hosts']);
-  for (var i = 0; i < overrides.length; i++) {
-    var ip = overrides[i][0];
-    var host = overrides[i][1];
-    this.adb_.su(['echo', ip + ' ' + host + ' >> /system/etc/hosts']);
-  }
-};
-
-/**
- * Clear DNS Overrides.
- *
- */
-BrowserAndroidChrome.prototype.scheduleClearDnsOverrides = function() {
-  'use strict';
-  // we need to write to /system which is read only
-  logger.debug('Remounting /system as read/write');
-  this.adb_.su(['mount', '-o', 'remount,rw', '/system']);
-
-  logger.debug('Clearing DNS overrides');
-  // add the localhost entry
-  this.adb_.su(['echo', '127.0.0.1 localhost > /system/etc/hosts']);
-};
-
 
 /**
  * @param {string} filename The local filename to write to.

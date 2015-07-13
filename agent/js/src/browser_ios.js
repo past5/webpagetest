@@ -689,23 +689,6 @@ BrowserIos.prototype.scheduleStopPacketCapture = function() {
 };
 
 /**
- * Set DNS Overrides.
- */
-BrowserIos.prototype.scheduleSetDnsOverrides = function() {
-  'use strict';
-  throw new Error('Set DNS overrides requested, but not implemented for iOS');
-};
-
-/**
- * Clear DNS Overrides.
- *
- */
-BrowserIos.prototype.scheduleClearDnsOverrides = function() {
-  'use strict';
-  throw new Error('Clear DNS overrides requested, but not implemented for iOS');
-};
-
-/**
  * Throws an error if the browser is not ready to run tests.
  *
  * @return {webdriver.promise.Promise} resolve() for addErrback.

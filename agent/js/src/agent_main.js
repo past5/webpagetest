@@ -415,11 +415,7 @@ Agent.prototype.startJobRun_ = function(job) {
 
     var script = job.task.script;
     var url = job.task.url;
-    var setDnsOverrides;
-    var navigateUrls;
-    var logDataCommands;
-    var httpHeaders;
-    var resetHeaders;
+    var steps;
 
     var pac;
     if (script && !/new\s+(\S+\.)?Builder\s*\(/.test(script)) {
@@ -427,11 +423,7 @@ Agent.prototype.startJobRun_ = function(job) {
       url = decodedScript.url;
       pac = decodedScript.pac;
       script = undefined;
-      setDnsOverrides = decodedScript.setDnsOverrides;
-      navigateUrls = decodedScript.navigateUrls;
-      logDataCommands = decodedScript.logDataCommands;
-      httpHeaders = decodedScript.httpHeaders;
-      resetHeaders = decodedScript.resetHeaders;
+      steps = decodedScript.steps;
     }
     url = url.trim();
     if (!((/^https?:\/\//i).test(url))) {
@@ -461,34 +453,10 @@ Agent.prototype.startJobRun_ = function(job) {
         task.url = url;
       }
 
-      if (!!setDnsOverrides) {
-        task.setDnsOverrides = setDnsOverrides;
+      if (!!steps) {
+        task.steps = steps;
       } else {
-        delete task.setDnsOverrides;
-      }
-
-      if (!!navigateUrls) {
-        task.navigateUrls = navigateUrls;
-      } else {
-        delete task.navigateUrls;
-      }
-
-      if (!!logDataCommands) {
-        task.logDataCommands = logDataCommands;
-      } else {
-        delete task.logDataCommands;
-      }
-
-      if (!!httpHeaders) {
-        task.httpHeaders = httpHeaders;
-      } else {
-        delete task.httpHeaders;
-      }
-
-      if (!!resetHeaders) {
-        task.resetHeaders = resetHeaders;
-      } else {
-        delete task.resetHeaders;
+        delete task.steps;
       }
 
     var message = {
@@ -622,64 +590,16 @@ Agent.prototype.decodeScript_ = function(script) {
   // Assign nulls to appease 'possibly uninitialized' warnings.
   var url = null;
   var pac = null;
-  var navigateUrls = [];
-  var setDnsOverrides = [];
-  var logDataCommands = [];
-  var lastLog = 1;
-  var httpHeaders = [];
-  var resetHeaders = [];
-  var headerPos = 0;
+  var step = {};
+  step.params = {};
+  step.params.setHeader = {};
+  var steps = [];
+  var m;
 
   script.split('\n').forEach(function(line, lineNumber) {
 
     line = line.trim();
     if (!line || 0 === line.indexOf('//')) {
-      return;
-    }
-
-    // find setDns commands
-    var m = line.match(/^setDns\s+(\S+)\s+(\S+)$/i);
-    if (m) {
-      var hostName = m[1];
-      var ipAddress = m[2];
-      setDnsOverrides.push([ipAddress, hostName]);
-      return;
-    }
-		
-    //find logData command on lines before next navigate
-    m = line.match(/^logData\s+(\S+)$/i);
-    if(m) {
-      lastLog = m[1];
-      logger.debug('logData match found: ' + lastLog);
-      return;
-    }
-
-    //find resetHeaders command on lines before next navigate
-    m = line.match(/^resetHeaders/);
-    if(m) {
-      resetHeaders.push(headerPos);
-      logger.debug('resetHeaders match found.');
-      return;
-    }
-
-    //find setHeader command on lines before next navigate
-    m = line.match(/^setHeader\s+(\S+)\s+(\S+)$/i);
-    if(m) {
-      httpHeaders.push([headerPos,m[1],m[2]]);
-      logger.debug('setHeader match found.  key: ' + m[1] + ' value: ' + m[2]);
-      return;
-    }
-
-    // find navigate commands
-    m = line.match(/^navigate\s+(\S+)$/i);
-    if (m) {
-      navigateUrls.push(m[1]);
-			
-      //always push last log value
-      logDataCommands.push(lastLog);
-
-      //advance first value of httpHeaders array, which tracks the position of corresponding navigate command
-      headerPos++;
       return;
     }
 
@@ -689,10 +609,53 @@ Agent.prototype.decodeScript_ = function(script) {
       var fromHost = m[1];
       var toHost = m[2];
       pac = 'function FindProxyForURL(url, host) {\n' +
-      '  if ("' + fromHost + '" === host) {\n' +
-        '    return "PROXY ' + toHost + '";\n' +
-      '  }\n' +
-        '  return "DIRECT";\n}\n';
+          '  if ("' + fromHost + '" === host) {\n' +
+          '    return "PROXY ' + toHost + '";\n' +
+          '  }\n' +
+          '  return "DIRECT";\n}\n';
+      return;
+    }
+
+    //find logData command on lines before next navigate
+    m = line.match(/^logData\s+(\S+)$/i);
+    if(m) {
+      step.params.logData = m[1];
+      logger.debug('logData match found: ' + m[1]);
+      return;
+    }
+
+    //find resetHeaders command on lines before next navigate
+    m = line.match(/^resetHeaders/);
+    if(m) {
+      step.params.setHeader = {};
+
+      logger.debug('resetHeaders match found.');
+      return;
+    }
+
+    //find setHeader command on lines before next navigate
+    m = line.match(/^setHeader\s+(\S+):\s+(\S+)$/i);
+    if(m) {
+      step.params.setHeader[m[1]] = m[2];
+
+      logger.debug('setHeader match found.  key: ' + m[1] + ' value: ' + m[2]);
+      return;
+    }
+
+    // find navigate commands
+    m = line.match(/^navigate\s+(\S+)$/i);
+    if (m) {
+      step.navigate = m[1];
+      logger.debug('navigate match found.  url: ' + m[1] + ' step: ' + JSON.stringify(step));
+      steps.push(step);
+
+      //reset step object while preserving parameters
+      var params = JSON.parse(JSON.stringify(step.params));
+      step = {};
+      step.params = {};
+      step.params.setHeader = {};
+      step.params = params;
+
       return;
     }
 
@@ -712,11 +675,9 @@ Agent.prototype.decodeScript_ = function(script) {
   });
 
 
-  if (navigateUrls.length > 0) {
+  if (steps.length > 0) {
     // final navigate is our test url
-    url = navigateUrls[navigateUrls.length - 1];
-    // remove final navigate from priming runs
-    // navigateUrls = navigateUrls.slice(0, navigateUrls.length - 1);
+    url = steps[steps.length - 1].navigate;
   }
 
   if (!url) {
@@ -727,11 +688,7 @@ Agent.prototype.decodeScript_ = function(script) {
   return {
     url: url,
     pac: pac,
-    setDnsOverrides: setDnsOverrides,
-    navigateUrls: navigateUrls,
-    logDataCommands: logDataCommands,
-    httpHeaders: httpHeaders,
-    resetHeaders: resetHeaders
+    steps: steps
   };
 };
 

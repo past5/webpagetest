@@ -926,21 +926,6 @@ WebDriverServer.prototype.scheduleStartPacketCaptureIfRequested_ = function() {
   }
 };
 
-
-/**
- * setDns overrides from script commands.
- * @private
- */
-WebDriverServer.prototype.scheduleSetDnsOverrides_ = function() {
-  'use strict';
-  if (this.task_.setDnsOverrides && this.task_.setDnsOverrides.length > 0) {
-    this.browser_.scheduleSetDnsOverrides(this.task_.setDnsOverrides);
-    this.app_.schedule('Setting DNS overrides', function() {
-      logger.debug('DNS overrides succeeded');
-    }.bind(this));
-  }
-};
-
 /**
  * @param {Object} browserCaps browser capabilities used to build the driver.
  * @private
@@ -950,13 +935,16 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
   if (!this.devTools_) {
     this.startChrome_(browserCaps);
   }
-  this.scheduleSetDnsOverrides_();
+
   this.scheduleClearBrowserCacheAndCookies_();
 
   this.networkCommand_('enable');
   this.pageCommand_('enable');
 
-  this.scheduleLoadPrimingPages_();
+  this.startVideoDevTools_();
+  this.scheduleStartPacketCaptureIfRequested_();
+
+  this.loadPrimingPages_();
 
   logger.debug("this.isPrimingRun: " + this.isPrimingRun);
 
@@ -965,8 +953,6 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
   if (!this.isPrimingRun) {
     this.blankBrowserPage();
 
-    this.startVideoDevTools_();
-    this.scheduleStartPacketCaptureIfRequested_();
     this.scheduleStartDevTools_();
 
     this.scheduleNavigate_(this.task_.url);
@@ -999,23 +985,20 @@ WebDriverServer.prototype.setWaitAfterOnLoad_ = function() {
  * the page to test. For flow testing.
  *  @private
  */
-WebDriverServer.prototype.scheduleLoadPrimingPages_ = function() {
+WebDriverServer.prototype.loadPrimingPages_ = function() {
   'use strict';
-  var primingPages = this.task_.navigateUrls;
-  var logDataCommands = this.task_.logDataCommands;
 
-  if (( typeof primingPages === 'object') && (primingPages.length > 0) ) {
+  var steps = this.task_.steps;
+
+  if (( typeof steps === 'object') && (steps.length > 0) ) {
     this.isPrimingRun = true;
-  }
 
-  if (this.task_.navigateUrls && this.task_.navigateUrls.length > 0 && (this.task_.navigateUrls.length == this.task_.logDataCommands.length)) {
     logger.debug('Starting priming pages');
 
-    for (var i = 0; i < primingPages.length; i++) {
-      var primingPage = primingPages[i];
-      var logDataCommand = logDataCommands[i];
+    for (var i = 0; i < steps.length; i++) {
+      var step = steps[i];
 				
-      this.runPrimingPage(primingPage, logDataCommand, i);
+      this.runPrimingPage(step);
     }
   }
 };
@@ -1023,57 +1006,27 @@ WebDriverServer.prototype.scheduleLoadPrimingPages_ = function() {
 /**
  * Load a single cache priming page, and executes logData, setHeader, and resetHeaders commands
  * prior to loading. For flow testing.
- * @param {String} primingPage - navigate url
- * @param {Integer} logDataCommand - turn Tracing On/Off - 1 or 0
- * @param {Integer} position - position of the navigate command in the array
+ * @param {Objects} step - step object containing navigate url and other parametiers
  *  @private
  */
-WebDriverServer.prototype.runPrimingPage = function(primingPage, logDataCommand, position) {
+WebDriverServer.prototype.runPrimingPage = function(step) {
   'use strict';
-  var httpHeaders = this.task_.httpHeaders;
-  var resetHeaders = this.task_.resetHeaders;
-  var resetFlag = false;
 
   this.blankBrowserPage();
 
-  //not capturing video yet, as it starts Tracing, ignoring logDataCommand
-  //this.startVideoDevTools_();
-  this.scheduleStartPacketCaptureIfRequested_();
-
-  if (logDataCommand == 1) {
-    this.scheduleStartDevTools_();
-  } else {
+  //start Tracing by default unless logData 0
+  if ((step.params.hasOwnProperty("logData")) && ("0"==step.params["logData"])) {
     this.scheduleStopDevTools_();
+  } else {
+    this.scheduleStartDevTools_();
   }
 
-  //look for resetHeaders command corresponding to this navigate
-  for (var i=0; i < resetHeaders.length; i++) {
-    if (resetHeaders[i] == position) {
-      resetFlag = true;
-      break;
-    }
+  //look for setHeader commands and set in objHeaders if found
+  if (typeof step.params.setHeader != 'undefined') {
+    this.scheduleSetExtraHeaders_(step.params.setHeader);
   }
 
-  //send blank objHeaders to reset any extra headers
-  if (resetFlag) {
-    this.scheduleSetExtraHeaders_({});
-  }
-
-  var objHeaders = {};
-
-  //look for setHeaders commands and set in objHeaders if found
-  for (var i=0; i < httpHeaders.length; i++) {
-    if (httpHeaders[i][0] == position) {
-      objHeaders[httpHeaders[i][1]] = httpHeaders[i][2];
-    }
-  }
-
-  //only send command if the objHeaders has something, otherwise will reset previous headers
-  if (!(Object.keys(objHeaders).length === 0)) {
-    this.scheduleSetExtraHeaders_(objHeaders);
-  }
-
-  this.scheduleNavigate_(primingPage);
+  this.scheduleNavigate_(step.navigate);
 };
 
 /**
@@ -1418,9 +1371,6 @@ WebDriverServer.prototype.done_ = function() {
       this.scheduleNoFault_('Stop packet capture',
           this.browser_.scheduleStopPacketCapture.bind(this.browser_));
     }
-  if (this.task_.setDnsOverrides && this.task_.setDnsOverrides.length > 0) {
-    this.browser_.scheduleClearDnsOverrides();
-  }
     this.scheduleNoFault_('Send IPC', function() {
         exports.process.send({
           cmd: (this.testError_ ? 'error' : 'done'),
