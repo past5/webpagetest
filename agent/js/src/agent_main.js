@@ -645,6 +645,11 @@ Agent.prototype.decodeScript_ = function(script) {
     // find navigate commands
     m = line.match(/^navigate\s+(\S+)$/i);
     if (m) {
+      //append http:// at the start if missing
+      if (!/^https?:\/\//i.test(m[1])) {
+        m[1] = 'http://' +  m[1];
+      }
+
       step.navigate = m[1];
       logger.debug('navigate match found.  url: ' + m[1] + ' step: ' + JSON.stringify(step));
       steps.push(step);
