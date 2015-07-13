@@ -603,6 +603,13 @@ Agent.prototype.decodeScript_ = function(script) {
       return;
     }
 
+    // find setDNS command
+    m = line.match(/^setDNS\s+(\S+)\s+(\S+)$/i);
+
+    if (m) {
+      return;
+    }
+
     // find pac commands
     m = line.match(/^pac\s+(\S+)\s+(\S+)$/i);
     if (m) {
