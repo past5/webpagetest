@@ -43,6 +43,7 @@ exports.process = process;
 var WD_CONNECT_TIMEOUT_MS_ = 120000;
 var DEVTOOLS_CONNECT_TIMEOUT_MS_ = 10000;
 var DETACH_TIMEOUT_MS_ = 2000;
+var VIDEO_PROCESSING_TIMEOUT_MS = 600000;
 
 /** Allow test access. */
 exports.WAIT_AFTER_ONLOAD_MS = 10000;
@@ -175,13 +176,19 @@ WebDriverServer.prototype.init = function(args) {
   this.isCacheWarm_ = args.isCacheWarm;
   this.screenshots_ = [];
   this.task_ = args.task;
+  this.flags_ = args.flags;
   this.testError_ = undefined;
   this.testStartTime_ = undefined;
   this.timeoutTimer_ = undefined;
   this.timeout_ = args.timeout;
   this.tracePromise_ = undefined;
   this.videoFile_ = undefined;
+  this.videoFrames_ = undefined;
+  this.histogramFile_ = undefined;
   this.runTempDir_ = args.runTempDir || '';
+  this.customMetrics_ = undefined;
+  this.userTimingMarks_ = undefined;
+  this.pageData_ = undefined;
   this.tearDown_();
 };
 
@@ -635,6 +642,17 @@ WebDriverServer.prototype.pageCommand_ = function(method, params) {
 };
 
 /**
+ * @param {string} method command method, e.g. 'navigate'.
+ * @param {Object} params command options.
+ * @return {webdriver.promise.Promise} resolve({string} responseBody).
+ * @private
+ */
+WebDriverServer.prototype.runtimeCommand_ = function(method, params) {
+  'use strict';
+  return this.devToolsCommand_({method: 'Runtime.' + method, params: params});
+};
+
+/**
  * @param {string} method command method, e.g. 'enable'.
  * @param {Object} params command options.
  * @return {webdriver.promise.Promise} resolve({string} responseBody).
@@ -672,6 +690,25 @@ WebDriverServer.prototype.setPageBackground_ = function(frameId, color) {
       frameId: frameId,
       html: color ? '<body style="background-color:' + color + ';"/>' : ''
     });
+};
+
+/**
+ * @param {string} method command method, e.g. 'navigate'.
+ * @param {Object} params command options.
+ * @return {webdriver.promise.Promise} resolve({string} responseBody).
+ * @private
+ */
+WebDriverServer.prototype.execBrowserScript_ = function(code) {
+  'use strict';
+  return this.runtimeCommand_('evaluate',
+      {expression: code, returnByValue: true}).then(function(response){
+    var value = undefined;
+    if (response['result'] !== undefined &&
+        response.result['value'] !== undefined) {
+      value = response.result.value;
+    }
+    return value;
+  }.bind(this));
 };
 
 /**
@@ -837,12 +874,17 @@ WebDriverServer.prototype.scheduleStartTracingIfRequested_ = function() {
     var message = {method: 'Tracing.start'};
 
     message.params = {
-      categories: 'disabled-by-default-devtools.timeline,devtools.timeline,disabled-by-default-devtools.timeline.frame,devtools.timeline.frame',
+      categories: 'blink.console,toplevel,disabled-by-default-devtools.timeline,devtools.timeline,disabled-by-default-devtools.timeline.frame,devtools.timeline.frame',
       options: 'record-as-much-as-possible'
     };
     if (1 === this.task_.trace) {
       var trace_categories = this.task_.traceCategories || '*';
-      message.params.categories = message.params.categories + ',' + trace_categories;
+      message.params.categories = trace_categories + ',' + message.params.categories;
+    } else {
+      message.params.categories = '-*,' + message.params.categories;
+    }
+    if (this.task_.timelineStackDepth) {
+      message.params.categories = message.params.categories + ',disabled-by-default-devtools.timeline.stack,devtools.timeline.stack,disabled-by-default-v8.cpu_profile';
     }
     this.devToolsCommand_(message).then(function() {
       logger.debug('Started tracing');
@@ -1273,6 +1315,121 @@ WebDriverServer.prototype.scheduleGetWdDevToolsLog_ = function() {
 };
 
 /**
+ * Collects in-browser metrics after the test is complete
+ * @private
+ */
+WebDriverServer.prototype.scheduleCollectMetrics_ = function() {
+  this.scheduleNoFault_('Collect Custom Metrics', function() {
+    if (this.task_['customMetrics'] !== undefined) {
+      for (var metric in this.task_.customMetrics) {
+        (function(metric){
+          this.execBrowserScript_('var wptCustomMetric = function() { ' +
+              this.task_.customMetrics[metric] +
+              '};' +
+              'wptCustomMetric();').then(function(result) {
+            if (this.customMetrics_ == undefined)
+              this.customMetrics_ = {};
+            this.customMetrics_[metric] = result;
+            logger.debug(metric + ' : ' + result);
+          }.bind(this));
+        }.bind(this))(metric);
+      }
+    }
+  }.bind(this));
+
+  this.scheduleNoFault_('Collect User Timing', function() {
+    this.execBrowserScript_('(function() {' +
+          'var marks = window.performance.getEntriesByType("mark");' +
+          'var m = [];' +
+          'if (marks.length) {' +
+          '  for (var i = 0; i < marks.length; i++)' +
+          '    m.push({"entryType": marks[i].entryType, ' +
+          '            "name": marks[i].name, ' +
+          '            "startTime": marks[i].startTime});' +
+          '}' +
+          'return m;' +
+          '})();').then(function(result) {
+      if (result && result.length) {
+        this.userTimingMarks_ = result;
+      }
+    }.bind(this));
+  }.bind(this));
+
+  this.scheduleNoFault_('Collect Page Metrics', function() {
+    this.execBrowserScript_('(function() {' +
+        'var pageData = {};' +
+        'var domCount = ' +
+        '   document.documentElement.getElementsByTagName("*").length;' +
+        'if (domCount === undefined)' +
+        ' domCount = 0;' +
+        'pageData["domElements"] = domCount;' +
+        'function addTime(name) {'+
+        ' if (window.performance.timing[name] > 0) {' +
+        '   pageData[name] = Math.max(0, Math.round(' +
+        '       window.performance.timing[name] -' +
+        '       window.performance.timing["navigationStart"]));' +
+        ' }' +
+        '};' +
+        'addTime("domContentLoadedEventStart");' +
+        'addTime("domContentLoadedEventEnd");' +
+        'addTime("loadEventStart");' +
+        'addTime("loadEventEnd");' +
+        'pageData["firstPaint"] = 0;' +
+        'if (window["chrome"] !== undefined && ' +
+        '    window.chrome["loadTimes"] !== undefined) {' +
+        ' var chromeTimes = window.chrome.loadTimes();' +
+        ' if (chromeTimes["firstPaintTime"] !== undefined &&' +
+        '     chromeTimes["firstPaintTime"] > 0) {' +
+        '   var startTime = chromeTimes["requestTime"] ? ' +
+        '       chromeTimes["requestTime"] : chromeTimes["startLoadTime"];' +
+        '   if (chromeTimes["firstPaintTime"] >= startTime)' +
+        '     pageData["firstPaint"] = Math.round(' +
+        '         (chromeTimes["firstPaintTime"] - startTime) * 1000.0);' +
+        ' }' +
+        '}' +
+        'return pageData;' +
+        '})();').then(function(result) {
+      if (result) {
+        this.pageData_ = result;
+      }
+    }.bind(this));
+  }.bind(this));
+};
+
+WebDriverServer.prototype.scheduleProcessVideo_ = function() {
+  this.scheduleNoFault_('Process Video', function() {
+    if (this.videoFile_ && this.flags_['processvideo'] == 'yes') {
+      var videoDir = path.join(this.runTempDir_, 'video');
+      this.histogramFile_ = path.join(this.runTempDir_, 'histograms.json');
+      var traceFile = path.join(this.runTempDir_, 'trace.json');
+      var options = ['visualmetrics.py', '-i', this.videoFile_, '-d',
+          videoDir, '--orange', '--viewport', '--force', '--quality', '75',
+          '--histogram', this.histogramFile_];
+      if (this.traceData_) {
+        fs.writeFileSync(traceFile, JSON.stringify(this.traceData_));
+        options.push('--timeline');
+        options.push(traceFile);
+      }
+      process_utils.scheduleExec(this.app_,
+          'python', options, undefined,
+          VIDEO_PROCESSING_TIMEOUT_MS).then(function(stdout) {
+        logger.info('Video processing completed: ' + stdout);
+        this.videoFrames_ = [];
+        var videoDir = path.join(this.runTempDir_, 'video');
+        var files = fs.readdirSync(videoDir);
+        files.forEach(function(fileName) {
+          var filePath = path.join(videoDir, fileName);
+          this.videoFrames_.push({'fileName' : fileName, 'diskPath' : filePath});
+        }.bind(this));
+        this.videoFile_ = undefined;
+      }.bind(this), function(err) {
+        logger.info('Video processing error: ' + err.message);
+      }.bind(this));
+    }
+  }.bind(this));
+};
+
+/**
  * @private
  */
 WebDriverServer.prototype.send_ = function() {
@@ -1363,9 +1520,11 @@ WebDriverServer.prototype.done_ = function() {
     }.bind(this), function(err) {
       logger.info('Ignoring screenshot error: ' + err.message);
     });
+    this.scheduleCollectMetrics_();
     if (this.videoFile_) {
       this.scheduleNoFault_('Stop video recording',
           this.browser_.scheduleStopVideoRecording.bind(this.browser_));
+      this.scheduleProcessVideo_();
     }
     if (this.pcapFile_) {
       this.scheduleNoFault_('Stop packet capture',
@@ -1380,7 +1539,12 @@ WebDriverServer.prototype.done_ = function() {
           screenshots: this.screenshots_,
           traceData: this.traceData_,
           videoFile: this.videoFile_,
-          pcapFile: this.pcapFile_
+          videoFrames: this.videoFrames_,
+          pcapFile: this.pcapFile_,
+          histogramFile: this.histogramFile_,
+          customMetrics: this.customMetrics_,
+          userTimingMarks: this.userTimingMarks_,
+          pageData: this.pageData_
         });
     }.bind(this));
 

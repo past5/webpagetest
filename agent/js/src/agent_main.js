@@ -171,6 +171,27 @@ Agent.prototype.scheduleProcessDone_ = function(ipcMsg, job) {
     if (ipcMsg.traceData) {
       job.zipResultFiles['trace.json'] = JSON.stringify(ipcMsg.traceData);
     }
+    if (ipcMsg.customMetrics) {
+      job.zipResultFiles['metrics.json'] = JSON.stringify(ipcMsg.customMetrics);
+    }
+    if (ipcMsg.userTimingMarks) {
+      job.zipResultFiles['timed_events.json'] = JSON.stringify(ipcMsg.userTimingMarks);
+    }
+    if (ipcMsg.pageData) {
+      job.zipResultFiles['page_data.json'] = JSON.stringify(ipcMsg.pageData);
+    }
+    if (ipcMsg.histogramFile) {
+      process_utils.scheduleFunctionNoFault(this.app_, 'Read histogram file',
+              fs.readFile, ipcMsg.histogramFile).then(function(buffer) {
+        job.resultFiles.push(new wpt_client.ResultFile(
+            wpt_client.ResultFile.ResultType.IMAGE,
+            'histograms.json',
+            'text/plain',
+            buffer));
+      }.bind(this));
+      process_utils.scheduleFunctionNoFault(this.app_, 'Delete histogram file',
+          fs.unlink, ipcMsg.histogramFile);
+    }
     if (ipcMsg.screenshots && ipcMsg.screenshots.length > 0) {
       var imageDescriptors = [];
       ipcMsg.screenshots.forEach(function(screenshot) {
@@ -207,6 +228,20 @@ Agent.prototype.scheduleProcessDone_ = function(ipcMsg, job) {
         logger.error('Unable to read video file: ' + e.message);
         job.agentError = job.agentError || e.message;
       });
+    }
+    if (ipcMsg.videoFrames) {
+      ipcMsg.videoFrames.forEach(function(videoFrame) {
+        logger.debug('Adding video frame %s', videoFrame.fileName);
+        process_utils.scheduleFunctionNoFault(this.app_,
+            'Read ' + videoFrame.diskPath,
+            fs.readFile, videoFrame.diskPath).then(function(buffer) {
+          job.resultFiles.push(new wpt_client.ResultFile(
+              wpt_client.ResultFile.ResultType.IMAGE,
+              videoFrame.fileName,
+              'image/jpeg',
+              buffer));
+        }.bind(this));
+      }.bind(this));
     }
     if (ipcMsg.pcapFile) {
       process_utils.scheduleFunction(this.app_, 'Read pcap file',
@@ -539,13 +574,38 @@ Agent.prototype.scheduleMakeDirs_ = function(dir) {
  */
 Agent.prototype.scheduleCleanRunTempDir_ = function() {
   'use strict';
-  this.scheduleMakeDirs_(this.runTempDir_);
-  process_utils.scheduleFunction(this.app_, 'Tmp read',
-      fs.readdir, this.runTempDir_).then(function(files) {
-    files.forEach(function(fileName) {
-      var filePath = path.join(this.runTempDir_, fileName);
-      process_utils.scheduleFunctionNoFault(this.app_, 'Delete ' + filePath,
-          fs.unlink, filePath);
+  this.scheduleNoFault_('Clean temp dir', function() {
+    this.scheduleMakeDirs_(this.runTempDir_);
+    var videoDir = path.join(this.runTempDir_, 'video');
+    process_utils.scheduleFunction(this.app_, 'Clean video dir', fs.exists, videoDir).then(
+        function(exists) {
+      if (exists) {
+        var videoDir = path.join(this.runTempDir_, 'video');
+        var files = fs.readdirSync(videoDir);
+        files.forEach(function(fileName) {
+          var filePath = path.join(videoDir, fileName);
+          process_utils.scheduleFunctionNoFault(this.app_, 'Delete ' + filePath,
+              fs.unlink, filePath);
+        }.bind(this));
+        process_utils.scheduleFunctionNoFault(this.app_, 'rmdir ' + videoDir,
+            fs.rmdir, videoDir);
+      }
+    }.bind(this));
+    process_utils.scheduleFunctionNoFault(this.app_, 'Tmp read',
+        fs.readdir, this.runTempDir_).then(function(files) {
+      files.forEach(function(fileName) {
+        var filePath = path.join(this.runTempDir_, fileName);
+        process_utils.scheduleFunctionNoFault(this.app_, 'Delete ' + filePath,
+            fs.unlink, filePath);
+      }.bind(this));
+    }.bind(this));
+    process_utils.scheduleFunction(this.app_, 'Tmp read',
+        fs.readdir, this.runTempDir_).then(function(files) {
+      files.forEach(function(fileName) {
+        var filePath = path.join(this.runTempDir_, fileName);
+        process_utils.scheduleFunctionNoFault(this.app_, 'Delete ' + filePath,
+            fs.unlink, filePath);
+      }.bind(this));
     }.bind(this));
   }.bind(this));
 };
