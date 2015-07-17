@@ -169,6 +169,7 @@ WebDriverServer.prototype.init = function(args) {
   this.exitWhenDone_ = args.exitWhenDone;
   this.isRecordingDevTools_ = false;
   this.pageLoadDonePromise_ = undefined;
+  this.isPrimingRun = false;
   this.pcapFile_ = undefined;
   this.runNumber_ = args.runNumber;
   this.isCacheWarm_ = args.isCacheWarm;
@@ -329,7 +330,7 @@ WebDriverServer.prototype.onDevToolsMessage_ = function(message) {
   // message, as noted below, so ignore messages until our abortTimer fires.
   if (!this.abortTimer_) {
     if ('Page.loadEventFired' === message.method) {
-      if (this.isRecordingDevTools_) {
+      if (this.isRecordingDevTools_ || this.isPrimingRun) {
         this.onPageLoad_();
       }
     } else if ('Inspector.detached' === message.method) {
@@ -725,12 +726,11 @@ WebDriverServer.prototype.getCapabilities_ = function() {
 };
 
 /**
- * Blanks out the browser at the beginning of a test, using DevTools.
+ * Clears browser cache and cookies at the beginning of the test
  *
  * @private
  */
-WebDriverServer.prototype.clearPageAndStartVideoDevTools_ = function() {
-  'use strict';
+WebDriverServer.prototype.clearBrowserCacheAndCookies_ = function() {
   this.getCapabilities_().then(function(caps) {
     if (!this.isCacheCleared_ && !this.isCacheWarm_) {
       if (caps['wkrdp.Network.clearBrowserCache']) {
@@ -744,13 +744,20 @@ WebDriverServer.prototype.clearPageAndStartVideoDevTools_ = function() {
       }
     }
   }.bind(this));
+}
+/**
+ * Blanks out the browser at the beginning of a test, using DevTools.
+ *
+ * @private
+ */
+WebDriverServer.prototype.clearPageAndStartVideoDevTools_ = function() {
+  'use strict';
   // Navigate to a blank, to make sure we clear the prior page and cancel
   // all pending events.  This isn't strictly required if startBrowser loads
   // "about:blank", but it's still a good idea.
   this.pageCommand_('navigate', {url: BLANK_PAGE_URL_});
   this.app_.timeout(500, 'Load blank startup page');
-  this.networkCommand_('enable');
-  this.pageCommand_('enable');
+
   if (1 === this.task_['Capture Video']) {  // Emit video sync, start recording
     this.getCapabilities_().then(function(caps) {
       if (!caps.videoRecording) {
@@ -932,30 +939,75 @@ WebDriverServer.prototype.runPageLoad_ = function(browserCaps) {
   if (!this.devTools_) {
     this.startChrome_(browserCaps);
   }
+
+  this.clearBrowserCacheAndCookies_();
+
+  this.networkCommand_('enable');
+  this.pageCommand_('enable');
+
+  //load all the navigate pages, except this.task_.url
+  //do not record data until the last page
+  this.scheduleLoadNavigatePages_();
+
   this.clearPageAndStartVideoDevTools_();
   this.scheduleStartPacketCaptureIfRequested_();
+
+  this.scheduleNavigate_(this.task_.url);
+};
+
+/**
+ * Loop through and load all the navigate pages to fill browser cache.
+ * For flow testing.
+ *  @private
+ */
+WebDriverServer.prototype.scheduleLoadNavigatePages_ = function() {
+  'use strict';
+  this.app_.schedule('Loading navigate pages', function() {
+    var steps = this.task_.steps;
+
+    if (( typeof steps === 'object') && (steps.length > 0)) {
+      this.isPrimingRun = true;
+
+      logger.debug('Starting priming run');
+
+      for (var i = 0; i < steps.length - 1; i++) {
+
+        var step = steps[i];
+
+        this.scheduleNavigate_(step.navigate);
+      }
+    }
+  }.bind(this));
+};
+
+/**
+ * Send command to navigate to a page
+ * @param {String} url - page address
+ *  @private
+ */
+WebDriverServer.prototype.scheduleNavigate_ = function(url) {
   // No page load timeout here -- agent_main enforces run-level timeout.
   this.app_.schedule('Run page load', function() {
     // onDevToolsMessage_ resolves this promise when it detects on-load.
     this.pageLoadDonePromise_ = new webdriver.promise.Deferred();
     if (this.timeout_) {
       var coalesceMillis = (undefined === this.task_.waitAfterOnload ?
-          exports.WAIT_AFTER_ONLOAD_MS :
-          (1000 * Math.floor(parseFloat(this.task_.waitAfterOnload, 10))));
+        exports.WAIT_AFTER_ONLOAD_MS :
+        (1000 * Math.floor(parseFloat(this.task_.waitAfterOnload, 10))));
       logger.debug("Waiting up to " + this.timeout_ +
-                   "ms for the page to load");
+        "ms for the page to load");
       this.timeoutTimer_ = global.setTimeout(
-          this.onPageLoad_.bind(this, new Error('Page load timeout')),
-          this.timeout_ - coalesceMillis);
+        this.onPageLoad_.bind(this, new Error('Page load timeout')),
+        this.timeout_ - coalesceMillis);
     } else {
       logger.debug("No page load timeout set (unexpected)");
     }
     this.onTestStarted_();
-    this.pageCommand_('navigate', {url: this.task_.url});
+    this.pageCommand_('navigate', {url: url});
     return this.pageLoadDonePromise_.promise;
   }.bind(this));
   this.waitForCoalesce_(this.app_);
-};
+}
 
 /**
  * Runs the user script in a sandboxed environment.
